@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+.eggs/
+*.egg-info/
+
+# Build outputs
+build/
+dist/
+.next/
+*.tsbuildinfo
+
+# Caches
+.cache/
+.parcel-cache/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Env (keep .env files for self-hosted/handoff)
+# .env
+
+# Test reports
+test_reports/
+.emergent/automation_output/

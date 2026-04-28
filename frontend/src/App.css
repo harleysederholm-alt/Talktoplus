@@ -1,0 +1,7 @@
+/* Minimal app-level CSS (most styles via Tailwind + index.css) */
+.logo-mark {
+  width: 36px; height: 36px; position: relative;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 999px;
+  background: #0A0A0A; border: 1px solid #27272A;
+}

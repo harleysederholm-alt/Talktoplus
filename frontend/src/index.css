@@ -1,0 +1,66 @@
+@import '@fontsource/chivo/400.css';
+@import '@fontsource/chivo/700.css';
+@import '@fontsource/chivo/900.css';
+@import '@fontsource/ibm-plex-sans/400.css';
+@import '@fontsource/ibm-plex-sans/500.css';
+@import '@fontsource/ibm-plex-sans/600.css';
+@import '@fontsource/jetbrains-mono/400.css';
+@import '@fontsource/jetbrains-mono/500.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  background: #F9FAFB;
+  color: #0A0A0A;
+}
+
+/* Custom scrollbar for sidebar */
+.tkp-sidebar::-webkit-scrollbar { width: 4px; }
+.tkp-sidebar::-webkit-scrollbar-track { background: transparent; }
+.tkp-sidebar::-webkit-scrollbar-thumb { background: #27272A; border-radius: 2px; }
+
+/* Subtle grain */
+.tkp-grain::before {
+  content: '';
+  position: absolute; inset: 0;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='1' seed='3'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.035 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+  pointer-events: none;
+  opacity: 0.6;
+}
+
+.tkp-card { background:#fff; border:1px solid #E2E8F0; border-radius:2px; }
+.tkp-btn-primary { background:#0A0A0A; color:#fff; padding: 0.5rem 1rem; border-radius:2px; font-weight:700; font-size:0.875rem; transition: background 0.15s ease; }
+.tkp-btn-primary:hover { background:#27272A; }
+.tkp-btn-primary:disabled { opacity: 0.5; cursor:not-allowed; }
+.tkp-input { border:1px solid #E2E8F0; border-radius:2px; padding: 0.5rem 0.75rem; font-size: 0.875rem; background:#fff; width:100%; }
+.tkp-input:focus { outline:none; border-color: #0A0A0A; }
+
+.card-title { font-size: 0.75rem; font-weight: 700; letter-spacing: 0.15em; text-transform: uppercase; color:#64748B; }
+
+.sev-CRITICAL { color:#DC2626; background:#FEF2F2; border-color:#FECACA; }
+.sev-HIGH     { color:#EA580C; background:#FFF7ED; border-color:#FED7AA; }
+.sev-MODERATE { color:#CA8A04; background:#FEFCE8; border-color:#FEF08A; }
+.sev-LOW      { color:#16A34A; background:#F0FDF4; border-color:#BBF7D0; }
+
+.bar-CRITICAL { background:#EF4444; }
+.bar-HIGH     { background:#F97316; }
+.bar-MODERATE { background:#EAB308; }
+.bar-LOW      { background:#22C55E; }
+
+.stagger > * { opacity: 0; animation: fadeUp 0.45s ease-out forwards; }
+.stagger > *:nth-child(1) { animation-delay: 0.04s; }
+.stagger > *:nth-child(2) { animation-delay: 0.08s; }
+.stagger > *:nth-child(3) { animation-delay: 0.12s; }
+.stagger > *:nth-child(4) { animation-delay: 0.16s; }
+.stagger > *:nth-child(5) { animation-delay: 0.20s; }
+.stagger > *:nth-child(6) { animation-delay: 0.24s; }
+
+@keyframes fadeUp { from { opacity:0; transform: translateY(8px);} to { opacity:1; transform: translateY(0);} }
+
+::selection { background: #0A0A0A; color: #fff; }
