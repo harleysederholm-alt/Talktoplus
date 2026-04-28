@@ -3,7 +3,7 @@ import { AppCtx } from '../App';
 import { http } from '../api';
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip, Area, AreaChart, PieChart, Pie, Cell } from 'recharts';
 import { Link } from 'react-router-dom';
-import { CaretRight, Users, TrendUp, UserCircle, WarningOctagon, Waveform } from '@phosphor-icons/react';
+import { CaretRight, Users, TrendUp, UserCircle, WarningOctagon, Waveform, GitBranch } from '@phosphor-icons/react';
 import SignalDetailModal from '../components/SignalDetailModal';
 
 const STATUS_COLORS = { CRITICAL: '#EF4444', HIGH: '#F97316', MODERATE: '#EAB308', LOW: '#94A3B8' };
@@ -105,30 +105,34 @@ export default function Boardroom() {
               </div>
             }
           />
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             {[
               { key: 'resources', label: t.boardroom.resources, icon: Users, data: heat.resources },
               { key: 'capabilities', label: t.boardroom.capabilities, icon: TrendUp, data: heat.capabilities },
               { key: 'engagement', label: t.boardroom.engagement, icon: UserCircle, data: heat.engagement },
+              { key: 'process', label: t.boardroom.process || (locale === 'fi' ? 'Prosessit' : 'Process'), icon: GitBranch, data: heat.process },
             ].map(({ key, label, icon: Icon, data }) => {
-              const level = data?.level || 'LOW';
+              const level = data?.level || 'NONE';
+              const hasData = (data?.count || 0) > 0;
+              const sevClass = hasData ? `sev-${level}` : 'border-slate-200 text-slate-400 bg-slate-50';
+              const barClass = hasData ? `bar-${level}` : 'bg-slate-200';
               return (
-                <div key={key} data-testid={`heat-${key}`} className="border border-slate-200 rounded-sm p-5">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <div className="text-[10px] tracking-[0.2em] uppercase text-slate-500 font-bold">{label}</div>
-                      <div className="font-heading text-3xl font-black tracking-tighter mt-3">{level}</div>
+                <div key={key} data-testid={`heat-${key}`} className="border border-slate-200 rounded-sm p-4">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="text-[10px] tracking-[0.2em] uppercase text-slate-500 font-bold truncate">{label}</div>
+                      <div className="font-heading text-2xl font-black tracking-tighter mt-2">{hasData ? level : '—'}</div>
                     </div>
-                    <div className={`w-10 h-10 rounded-full sev-${level} border flex items-center justify-center`}>
-                      <Icon size={16} weight="duotone" />
+                    <div className={`shrink-0 w-9 h-9 rounded-full border flex items-center justify-center ${sevClass}`}>
+                      <Icon size={14} weight="duotone" />
                     </div>
                   </div>
                   <div className="h-1.5 bg-slate-100 rounded-full mt-4 overflow-hidden">
-                    <div className={`h-full bar-${level}`} style={{ width: `${Math.min((data?.score || 1) / 4 * 100, 100)}%` }} />
+                    <div className={`h-full ${barClass}`} style={{ width: hasData ? `${Math.min((data?.score || 1) / 4 * 100, 100)}%` : '0%' }} />
                   </div>
                   <div className="mt-3 flex items-baseline justify-between">
-                    <span className="font-heading text-2xl font-bold">{data?.score ?? '—'}</span>
-                    <span className="text-[10px] tracking-widest uppercase text-slate-500">{t.boardroom.riskScore}</span>
+                    <span className="font-heading text-xl font-bold">{hasData ? data.score : '—'}</span>
+                    <span className="text-[9px] tracking-widest uppercase text-slate-500">{hasData ? `${data.count} sig.` : t.empty || 'No data'}</span>
                   </div>
                 </div>
               );
@@ -220,15 +224,15 @@ export default function Boardroom() {
             <div className="h-48">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
-                  <Pie data={dist} dataKey="value" nameKey="name" innerRadius={50} outerRadius={80} paddingAngle={3} stroke="none">
+                  <Pie data={dist} dataKey="value" nameKey="name" innerRadius="62%" outerRadius="92%" paddingAngle={3} stroke="none">
                     {dist.map((e, i) => <Cell key={i} fill={STATUS_COLORS[e.name]} />)}
                   </Pie>
                 </PieChart>
               </ResponsiveContainer>
             </div>
-            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-              <div className="font-heading text-3xl font-black tracking-tighter">{totalRisks}</div>
-              <div className="text-[10px] tracking-widest uppercase text-slate-500 mt-1">{t.boardroom.total}</div>
+            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none px-6">
+              <div className="font-heading text-2xl font-black tracking-tighter leading-none">{totalRisks}</div>
+              <div className="text-[9px] tracking-widest uppercase text-slate-500 mt-1 text-center">{t.boardroom.total}</div>
             </div>
           </div>
           <div className="mt-4 space-y-1.5">

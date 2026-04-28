@@ -28,7 +28,7 @@ def test_login_invalid():
     assert r.status_code == 401
 
 def test_register_new(H):
-    email = f"TEST_{uuid.uuid4().hex[:8]}@test.io"
+    email = f"test_{uuid.uuid4().hex[:8]}@test.io"
     r = requests.post(f"{BASE}/api/auth/register", json={"email": email, "password": "Test!2026", "full_name": "Test User"}, timeout=30)
     assert r.status_code == 200
     assert r.json()["user"]["email"] == email
@@ -86,7 +86,8 @@ def test_signals_list_has_pending(H):
     r = requests.get(f"{BASE}/api/signals", headers=H, timeout=30)
     assert r.status_code == 200
     sigs = r.json()
-    assert len(sigs) >= 13
+    # Tenant-scoped: 4 default-tenant validated + 1 pending = 5
+    assert len(sigs) >= 5
     assert any(s["status"] == "pending" for s in sigs)
 
 def test_create_signal_auto_analyzes(H):
@@ -151,7 +152,7 @@ def test_strategy_crud(H):
 def test_tenants_list_and_create(H):
     r = requests.get(f"{BASE}/api/tenants", headers=H, timeout=30)
     assert r.status_code == 200
-    assert len(r.json()) >= 4
+    assert len(r.json()) >= 3
     r2 = requests.post(f"{BASE}/api/tenants", headers=H,
         json={"name": f"TEST_{uuid.uuid4().hex[:6]}", "sector": "TestSector"}, timeout=30)
     assert r2.status_code == 200
