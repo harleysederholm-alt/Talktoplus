@@ -3,7 +3,8 @@ import { AppCtx } from '../App';
 import { http } from '../api';
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip, Area, AreaChart, PieChart, Pie, Cell } from 'recharts';
 import { Link } from 'react-router-dom';
-import { CaretRight, Users, TrendUp, UserCircle, WarningOctagon, Waveform, GitBranch } from '@phosphor-icons/react';
+import { CaretRight, Users, TrendUp, UserCircle, WarningOctagon, Waveform, GitBranch, FilePdf } from '@phosphor-icons/react';
+import { toast } from 'sonner';
 import SignalDetailModal from '../components/SignalDetailModal';
 
 const STATUS_COLORS = { CRITICAL: '#EF4444', HIGH: '#F97316', MODERATE: '#EAB308', LOW: '#94A3B8' };
@@ -43,6 +44,27 @@ export default function Boardroom() {
   const [signals, setSignals] = useState([]);
   const [sys, setSys] = useState(null);
   const [activeSignal, setActiveSignal] = useState(null);
+  const [exporting, setExporting] = useState(false);
+
+  const exportExecutivePDF = async () => {
+    setExporting(true);
+    try {
+      const res = await http.get(`/reports/executive-summary.pdf?days=${timeRange}`, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `executive-summary-${new Date().toISOString().slice(0, 10)}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success(t.boardroom.boardReportReady || 'Board report ready ✓');
+    } catch (e) {
+      toast.error('Export failed');
+    } finally {
+      setExporting(false);
+    }
+  };
 
   useEffect(() => {
     Promise.all([
@@ -88,7 +110,21 @@ export default function Boardroom() {
 
   return (
     <div data-testid="boardroom-page">
-      <PageHead title={t.boardroom.title} subtitle={t.boardroom.subtitle} />
+      <div className="flex items-start justify-between mb-6">
+        <div>
+          <h1 className="font-heading text-4xl font-black tracking-tighter">{t.boardroom.title}</h1>
+          <div className="text-[11px] tracking-[0.25em] uppercase text-slate-500 mt-1">{t.boardroom.subtitle}</div>
+        </div>
+        <button
+          onClick={exportExecutivePDF}
+          disabled={exporting}
+          data-testid="export-board-report-btn"
+          className="tkp-btn-primary flex items-center gap-2 disabled:opacity-50"
+        >
+          <FilePdf size={14} weight="bold" className={exporting ? 'animate-pulse' : ''} />
+          {exporting ? (t.boardroom.exporting || 'Generating…') : (t.boardroom.boardReport || 'Board Report PDF')}
+        </button>
+      </div>
 
       <div className="grid grid-cols-12 gap-6 stagger">
         {/* Executive Heatmap — spans left 8 */}

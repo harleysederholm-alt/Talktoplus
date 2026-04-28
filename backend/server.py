@@ -13,7 +13,7 @@ from slowapi.middleware import SlowAPIMiddleware
 from core import db, logger, limiter, ENABLE_DISPATCHER, CORS_ALLOW_LIST
 from routers import (
     auth, tenants, signals, action_cards, strategy_docs,
-    swarm, oracle, analytics, system, webhook, notifications, ws,
+    swarm, oracle, analytics, system, webhook, notifications, reports, ws,
 )
 
 app = FastAPI(title="TALK TO+ BDaaS", version="1.3.0")
@@ -46,7 +46,7 @@ api = APIRouter(prefix="/api")
 for r in (
     auth.router, tenants.router, signals.router, action_cards.router,
     strategy_docs.router, swarm.router, oracle.router, analytics.router,
-    system.router, webhook.router, notifications.router,
+    system.router, webhook.router, notifications.router, reports.router,
 ):
     api.include_router(r)
 app.include_router(api)

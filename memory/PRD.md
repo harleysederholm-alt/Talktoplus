@@ -54,14 +54,20 @@ Build TALK TO+ BDaaS — Execution Risk Validation Engine. Privacy-first, "Sover
 - ✅ **Backend modular refactor** (docs/02): server.py 1905 LOC → 78 LOC. New layout:
   - `core.py` — config, Mongo, JWT/auth helpers, audit, rate limiter
   - `models.py` — all Pydantic models + enums
-  - `services/` — `embedding`, `ai`, `swarm`, `signal_pipeline`, `notifications`, `pdf`
-  - `routers/` — `auth`, `tenants`, `signals`, `action_cards`, `strategy_docs`, `swarm`, `oracle`, `analytics`, `system`, `webhook`, `notifications`, `ws`
+  - `services/` — `embedding`, `ai`, `swarm`, `signal_pipeline`, `notifications`, `pdf`, `executive_report`
+  - `routers/` — `auth`, `tenants`, `signals`, `action_cards`, `strategy_docs`, `swarm`, `oracle`, `analytics`, `system`, `webhook`, `notifications`, `reports`, `ws`
   - `seed.py` — demo data (Metso/Nordea/Wärtsilä)
 - ✅ **Visual fixes (Boardroom)**:
   - Heatmap: 3-column grid → **4-column** including the previously hidden `process` bucket
   - Empty buckets render as "—" with neutral styling instead of misleading "LOW"
   - Risk Distribution donut: percentage-based radii (62%/92%) + smaller center text (text-2xl) so the total never overlaps the ring
-- ✅ **Tests**: 21/21 backend regression pass after refactor
+- ✅ **Executive Board Report PDF** (NEW):
+  - `GET /api/reports/executive-summary.pdf?days=30` — single-call C-level quarterly report
+  - Aggregates: GRI value+trend chart (last N days), 4-bucket sovereignty heatmap, top-3 oracle alerts, top recent validated signals, full risk distribution
+  - Auto-generated headline + lede that adapts to GRI level (elevated / holding / stable)
+  - WeasyPrint A4 layout with branded header, footer pagination, "Confidential · {tenant}" left, page X / Y right
+  - Boardroom **"Vie hallitusraportti PDF"** button in top-right header (FI/EN i18n)
+- ✅ **Tests**: 22/22 backend regression pass after refactor
 
 ## 5. Demo credentials
 - Super Admin: `admin@talktoplus.io` / `Admin!2026`

@@ -173,3 +173,12 @@ def test_webhook_ingests():
         headers={"X-Source": "howspace"}, timeout=30)
     assert r.status_code == 200
     assert r.json()["accepted"] is True
+
+
+# --- Reports ---
+def test_executive_summary_pdf(H):
+    r = requests.get(f"{BASE}/api/reports/executive-summary.pdf?days=30", headers=H, timeout=60)
+    assert r.status_code == 200
+    assert r.headers.get("content-type", "").startswith("application/pdf")
+    assert len(r.content) > 5000  # real PDF, not stub
+    assert r.content[:4] == b"%PDF"
