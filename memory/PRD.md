@@ -50,6 +50,19 @@ Build TALK TO+ BDaaS — Execution Risk Validation Engine. Privacy-first, "Sover
 - ✅ **Postgres scaffold** (docs/01): `postgres_adapter.py` stub + feature flag `USE_POSTGRES` + Tenant RLS context manager template
 - ⏭ **Server.py split** (docs/02): refactor plan written to `_split_plan.py` (deferred — pure mechanical, high regression risk in single session)
 
+## 4d. Erä 3 additions (Apr 28, 2026)
+- ✅ **Backend modular refactor** (docs/02): server.py 1905 LOC → 78 LOC. New layout:
+  - `core.py` — config, Mongo, JWT/auth helpers, audit, rate limiter
+  - `models.py` — all Pydantic models + enums
+  - `services/` — `embedding`, `ai`, `swarm`, `signal_pipeline`, `notifications`, `pdf`
+  - `routers/` — `auth`, `tenants`, `signals`, `action_cards`, `strategy_docs`, `swarm`, `oracle`, `analytics`, `system`, `webhook`, `notifications`, `ws`
+  - `seed.py` — demo data (Metso/Nordea/Wärtsilä)
+- ✅ **Visual fixes (Boardroom)**:
+  - Heatmap: 3-column grid → **4-column** including the previously hidden `process` bucket
+  - Empty buckets render as "—" with neutral styling instead of misleading "LOW"
+  - Risk Distribution donut: percentage-based radii (62%/92%) + smaller center text (text-2xl) so the total never overlaps the ring
+- ✅ **Tests**: 21/21 backend regression pass after refactor
+
 ## 5. Demo credentials
 - Super Admin: `admin@talktoplus.io` / `Admin!2026`
 - Facilitator: `facilitator@talktoplus.io` / `Facil!2026`
@@ -57,7 +70,7 @@ Build TALK TO+ BDaaS — Execution Risk Validation Engine. Privacy-first, "Sover
 
 ## 6. Backlog (P1/P2)
 - **P1**: Migrate to PostgreSQL + Qdrant; replace pseudo-embedding with BGE-M3
-- **P1**: Split server.py into routers/services modules
+- ✅ ~~P1: Split server.py into routers/services modules~~ (done Apr 28, 2026)
 - **P2**: Real Howspace/Teams webhook integration with replay-attack nonce store
 - **P2**: WebSocket push for live Oracle alerts
 - **P2**: Action Card export to PDF/Slack
