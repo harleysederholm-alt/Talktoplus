@@ -19,7 +19,7 @@ export default function SignalsRadar() {
     const q = filter === 'all' ? '' : `?status_=${filter}`;
     http.get(`/signals${q}`).then(r => setSignals(r.data)).catch(() => {});
   };
-  useEffect(load, [filter]);
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [filter]);
 
   const submit = async (e) => {
     e.preventDefault(); setBusy(true);

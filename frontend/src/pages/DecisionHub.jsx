@@ -21,7 +21,7 @@ export default function DecisionHub() {
     if (r.data.length > 0) setActive(r.data[0]);
     else setActive(null);
   }).catch(() => {});
-  useEffect(load, []);
+  useEffect(() => { load(); }, []);
 
   const submit = async () => {
     if (!active) return;
