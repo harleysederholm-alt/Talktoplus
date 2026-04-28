@@ -154,21 +154,8 @@ export default function Layout() {
             )}
           </div>
 
-          {/* Time range filter */}
-          <div className="flex border border-slate-200 rounded-sm bg-white overflow-hidden" data-testid="time-range">
-            {[7, 14, 30].map(d => (
-              <button
-                key={d}
-                data-testid={`range-${d}`}
-                onClick={() => setTimeRange(d)}
-                className={`px-3 py-1.5 text-[11px] font-bold tracking-widest uppercase transition-colors ${
-                  timeRange === d ? 'bg-ink text-white' : 'text-slate-600 hover:text-ink'
-                }`}
-              >
-                {locale === 'fi' ? `${d} pv` : `${d}d`}
-              </button>
-            ))}
-          </div>
+          {/* Time range filter now lives inside Boardroom trend card.
+              Topbar kept clean for search + lang + profile. */}
 
           <button
             data-testid="lang-toggle"

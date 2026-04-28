@@ -4,6 +4,7 @@ import { http } from '../api';
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip, Area, AreaChart, PieChart, Pie, Cell } from 'recharts';
 import { Link } from 'react-router-dom';
 import { CaretRight, Users, TrendUp, UserCircle, WarningOctagon, Waveform } from '@phosphor-icons/react';
+import SignalDetailModal from '../components/SignalDetailModal';
 
 const STATUS_COLORS = { CRITICAL: '#EF4444', HIGH: '#F97316', MODERATE: '#EAB308', LOW: '#94A3B8' };
 
@@ -33,7 +34,7 @@ const LevelBadge = ({ level }) => (
 );
 
 export default function Boardroom() {
-  const { t, timeRange, search } = useContext(AppCtx);
+  const { t, timeRange, setTimeRange, search, locale } = useContext(AppCtx);
   const [heat, setHeat] = useState({});
   const [trend, setTrend] = useState([]);
   const [dist, setDist] = useState([]);
@@ -41,6 +42,7 @@ export default function Boardroom() {
   const [bottlenecks, setBottlenecks] = useState([]);
   const [signals, setSignals] = useState([]);
   const [sys, setSys] = useState(null);
+  const [activeSignal, setActiveSignal] = useState(null);
 
   useEffect(() => {
     Promise.all([
@@ -171,9 +173,20 @@ export default function Boardroom() {
             title={t.boardroom.trend}
             subtitle={t.boardroom.trendSub}
             actions={
-              <select data-testid="trend-range" className="tkp-input w-auto text-xs">
-                <option>7 Days</option>
-              </select>
+              <div className="flex border border-slate-200 rounded-sm bg-white overflow-hidden" data-testid="trend-range">
+                {[7, 14, 30].map(d => (
+                  <button
+                    key={d}
+                    data-testid={`trend-range-${d}`}
+                    onClick={() => setTimeRange(d)}
+                    className={`px-2.5 py-1.5 text-[11px] font-bold tracking-widest uppercase transition-colors ${
+                      timeRange === d ? 'bg-ink text-white' : 'text-slate-600 hover:text-ink'
+                    }`}
+                  >
+                    {locale === 'fi' ? `${d} pv` : `${d}d`}
+                  </button>
+                ))}
+              </div>
             }
           />
           <div className="flex items-baseline gap-3 mb-4">
@@ -269,7 +282,7 @@ export default function Boardroom() {
             </thead>
             <tbody>
               {signals.map(s => (
-                <tr key={s.id} className="border-b border-slate-100 hover:bg-slate-50 text-sm" data-testid={`signal-row-${s.id}`}>
+                <tr key={s.id} onClick={() => setActiveSignal(s)} className="border-b border-slate-100 hover:bg-slate-50 text-sm cursor-pointer" data-testid={`signal-row-${s.id}`}>
                   <td className="py-3 pr-4 truncate max-w-[280px]">{s.content.slice(0, 48)}…</td>
                   <td className="py-3 pr-4 text-slate-600">{s.business_unit}</td>
                   <td className="py-3 pr-4"><LevelBadge level={s.override_risk_level || s.risk_level} /></td>
@@ -308,6 +321,7 @@ export default function Boardroom() {
           </Link>
         </Card>
       </div>
+      <SignalDetailModal signal={activeSignal} onClose={() => setActiveSignal(null)} t={t} />
     </div>
   );
 }
