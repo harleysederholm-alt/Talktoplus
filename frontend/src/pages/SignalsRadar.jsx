@@ -8,7 +8,7 @@ const LevelBadge = ({ level }) => (
 );
 
 export default function SignalsRadar() {
-  const { t } = useContext(AppCtx);
+  const { t, timeRange, search } = useContext(AppCtx);
   const [signals, setSignals] = useState([]);
   const [filter, setFilter] = useState('all');
   const [showNew, setShowNew] = useState(false);
@@ -20,6 +20,18 @@ export default function SignalsRadar() {
     http.get(`/signals${q}`).then(r => setSignals(r.data)).catch(() => {});
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [filter]);
+
+  const filtered = signals.filter(s => {
+    const ageDays = (Date.now() - new Date(s.submitted_at).getTime()) / 86400000;
+    if (ageDays > timeRange) return false;
+    if (search) {
+      const q = search.toLowerCase();
+      return (s.content || '').toLowerCase().includes(q) ||
+             (s.business_unit || '').toLowerCase().includes(q) ||
+             (s.summary || '').toLowerCase().includes(q);
+    }
+    return true;
+  });
 
   const submit = async (e) => {
     e.preventDefault(); setBusy(true);

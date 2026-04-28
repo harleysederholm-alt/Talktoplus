@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { Toaster } from 'sonner';
 import { http } from './api';
 import { useT } from './i18n';
 import Layout from './components/Layout';
@@ -22,18 +23,20 @@ export default function App() {
     return raw ? JSON.parse(raw) : null;
   });
   const [locale, setLocale] = useState(() => localStorage.getItem('tkp_locale') || 'fi');
+  const [timeRange, setTimeRange] = useState(() => parseInt(localStorage.getItem('tkp_timerange') || '14', 10));
+  const [search, setSearch] = useState('');
   const t = useT(locale);
 
   useEffect(() => { localStorage.setItem('tkp_locale', locale); }, [locale]);
+  useEffect(() => { localStorage.setItem('tkp_timerange', String(timeRange)); }, [timeRange]);
+  useEffect(() => {
+    if (user) localStorage.setItem('tkp_user', JSON.stringify(user));
+  }, [user]);
 
-  // refresh user
   useEffect(() => {
     if (!user) return;
-    http.get('/auth/me').then(r => {
-      localStorage.setItem('tkp_user', JSON.stringify(r.data));
-      setUser(r.data);
-    }).catch(() => {});
-  }, []); // run once on mount
+    http.get('/auth/me').then(r => setUser(r.data)).catch(() => {});
+  }, []);  // eslint-disable-line
 
   const login = (token, u) => {
     localStorage.setItem('tkp_token', token);
@@ -46,10 +49,11 @@ export default function App() {
     setUser(null);
   };
 
-  const ctx = { user, login, logout, locale, setLocale, t };
+  const ctx = { user, setUser, login, logout, locale, setLocale, t, timeRange, setTimeRange, search, setSearch };
 
   return (
     <AppCtx.Provider value={ctx}>
+      <Toaster position="top-right" richColors closeButton duration={3000} />
       <BrowserRouter>
         <Routes>
           <Route path="/auth" element={user ? <Navigate to="/" /> : <Auth />} />

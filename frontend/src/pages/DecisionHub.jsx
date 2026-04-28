@@ -111,17 +111,19 @@ export default function DecisionHub() {
               </div>
 
               <div className="border-t border-slate-200 pt-6 space-y-4">
-                <div className="flex gap-2">
+                <div className="flex gap-2 flex-wrap">
                   {[
                     { k: 'validate', l: t.decision.validate, Icon: CheckCircle, cls: 'bg-emerald-600 text-white border-emerald-600' },
                     { k: 'override', l: t.decision.override, Icon: ArrowsClockwise, cls: 'bg-amber-500 text-white border-amber-500' },
+                    { k: 'in_progress', l: t.decision.inProgress, Icon: ArrowsClockwise, cls: 'bg-blue-600 text-white border-blue-600' },
+                    { k: 'escalate', l: t.decision.escalate, Icon: ArrowsClockwise, cls: 'bg-red-600 text-white border-red-600' },
                     { k: 'dismiss', l: t.decision.dismiss, Icon: XCircle, cls: 'bg-slate-700 text-white border-slate-700' },
                   ].map(({ k, l, Icon, cls }) => (
                     <button
                       key={k}
                       data-testid={`decision-${k}`}
                       onClick={() => setMode(k)}
-                      className={`px-4 py-2 text-xs font-bold tracking-widest uppercase rounded-sm border flex items-center gap-2 ${mode === k ? cls : 'bg-white text-slate-600 border-slate-200 hover:border-ink'}`}>
+                      className={`px-3 py-2 text-xs font-bold tracking-widest uppercase rounded-sm border flex items-center gap-2 ${mode === k ? cls : 'bg-white text-slate-600 border-slate-200 hover:border-ink'}`}>
                       <Icon size={14} />{l}
                     </button>
                   ))}

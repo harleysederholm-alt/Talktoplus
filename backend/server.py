@@ -88,6 +88,8 @@ class SignalStatus(str, Enum):
     VALIDATED = "validated"
     OVERRIDDEN = "overridden"
     DISMISSED = "dismissed"
+    IN_PROGRESS = "in_progress"
+    ESCALATED = "escalated"
 
 
 class BottleneckCategory(str, Enum):
@@ -180,7 +182,7 @@ class SignalCreate(BaseModel):
 
 
 class ValidationReq(BaseModel):
-    decision: Literal["validate", "override", "dismiss"]
+    decision: Literal["validate", "override", "dismiss", "escalate", "in_progress"]
     note: Optional[str] = None
     override_risk_level: Optional[RiskLevel] = None
 
@@ -194,8 +196,11 @@ class ActionCard(BaseModel):
     playbook: List[str]                # steps
     rag_context_used: List[str] = []   # from strategy docs
     swarm_patterns_used: List[str] = [] # from mothership
-    impact_score: Optional[int] = None # facilitator scored 1-5
+    impact_score: Optional[int] = None # facilitator scored 1-10
     swarm_verified: bool = False
+    swarm_verified_count: int = 0      # number of similar orgs
+    status: Literal["pending_validation", "validated", "in_progress", "dismissed", "escalated"] = "pending_validation"
+    facilitator: Optional[str] = None
     created_at: datetime
 
 
@@ -550,6 +555,40 @@ async def me(user=Depends(get_current_user)):
     return UserPublic(**user)
 
 
+class RoleSwitchReq(BaseModel):
+    role: Role
+
+
+@api.post("/auth/role", response_model=UserPublic)
+async def switch_role(body: RoleSwitchReq, user=Depends(get_current_user)):
+    """DEMO ONLY — allows the seeded admin user to switch role on the fly."""
+    # In production this would be admin-only and target a different user
+    await db.users.update_one({"id": user["id"]}, {"$set": {"role": body.role.value}})
+    u = await db.users.find_one({"id": user["id"]}, {"_id": 0, "password_hash": 0})
+    return UserPublic(**u)
+
+
+class ProfileUpdateReq(BaseModel):
+    full_name: Optional[str] = None
+    locale: Optional[str] = None
+    notification_preferences: Optional[Dict[str, Any]] = None
+
+
+@api.patch("/auth/profile", response_model=UserPublic)
+async def update_profile(body: ProfileUpdateReq, user=Depends(get_current_user)):
+    upd = {}
+    if body.full_name:
+        upd["full_name"] = body.full_name
+    if body.locale in ("fi", "en"):
+        upd["locale"] = body.locale
+    if body.notification_preferences is not None:
+        upd["notification_preferences"] = body.notification_preferences
+    if upd:
+        await db.users.update_one({"id": user["id"]}, {"$set": upd})
+    u = await db.users.find_one({"id": user["id"]}, {"_id": 0, "password_hash": 0})
+    return UserPublic(**u)
+
+
 # --------------------------------------------------------------------
 # Tenants
 # --------------------------------------------------------------------
@@ -665,6 +704,16 @@ async def validate_signal(sid: str, body: ValidationReq, user=Depends(get_curren
         out = await db.signals.find_one({"id": sid}, {"_id": 0})
         return Signal(**out)
 
+    if body.decision in ("escalate", "in_progress"):
+        new_status = SignalStatus.ESCALATED if body.decision == "escalate" else SignalStatus.IN_PROGRESS
+        await db.signals.update_one({"id": sid}, {"$set": {
+            "status": new_status.value,
+            "validated_by": user["full_name"], "validated_at": now,
+            "validation_note": body.note,
+        }})
+        out = await db.signals.find_one({"id": sid}, {"_id": 0})
+        return Signal(**out)
+
     new_status = SignalStatus.OVERRIDDEN if body.decision == "override" else SignalStatus.VALIDATED
     final_risk = body.override_risk_level.value if (body.decision == "override" and body.override_risk_level) else s["risk_level"]
 
@@ -735,8 +784,8 @@ async def list_cards(user=Depends(get_current_user)):
 
 @api.post("/action-cards/{cid}/impact", response_model=ActionCard)
 async def score_card(cid: str, score: int, user=Depends(get_current_user)):
-    if score < 1 or score > 5:
-        raise HTTPException(400, "score 1-5")
+    if score < 1 or score > 10:
+        raise HTTPException(400, "score 1-10")
     res = await db.action_cards.find_one_and_update(
         {"id": cid, "tenant_id": user["tenant_id"]},
         {"$set": {"impact_score": score}},
@@ -745,6 +794,20 @@ async def score_card(cid: str, score: int, user=Depends(get_current_user)):
     )
     if not res:
         raise HTTPException(404, "Not found")
+    return ActionCard(**res)
+
+
+@api.post("/action-cards/{cid}/status", response_model=ActionCard)
+async def update_card_status(cid: str, status: Literal["pending_validation", "validated", "in_progress", "dismissed", "escalated"], user=Depends(get_current_user)):
+    res = await db.action_cards.find_one_and_update(
+        {"id": cid, "tenant_id": user["tenant_id"]},
+        {"$set": {"status": status}},
+        return_document=True,
+        projection={"_id": 0},
+    )
+    if not res:
+        raise HTTPException(404, "Not found")
+    await audit("card.status_changed", user["id"], user["tenant_id"], {"card_id": cid, "status": status})
     return ActionCard(**res)
 
 
@@ -1529,28 +1592,31 @@ app.include_router(api)
 # Seed demo data (idempotent)
 # --------------------------------------------------------------------
 async def seed_demo():
-    # Tenants
+    # Tenants — Metso Outotec / Nordea / Wärtsilä per problem statement
     default_tenants = [
-        {"id": "default-tenant", "name": "Nordic Tech Oyj", "sector": "Technology"},
-        {"id": "tenant-health", "name": "HealthPlus Group", "sector": "Healthcare"},
-        {"id": "tenant-finance", "name": "Aurora Finance", "sector": "Financial Services"},
-        {"id": "tenant-energy", "name": "GreenGrid Energy", "sector": "Energy"},
+        {"id": "default-tenant", "name": "Metso Outotec", "sector": "Manufacturing"},
+        {"id": "tenant-nordea", "name": "Nordea", "sector": "Financial Services"},
+        {"id": "tenant-wartsila", "name": "Wärtsilä", "sector": "Energy & Marine"},
     ]
     for t in default_tenants:
         if not await db.tenants.find_one({"id": t["id"]}):
             await db.tenants.insert_one({
                 "id": t["id"], "name": t["name"], "sector": t["sector"],
                 "sector_hash": sector_hash(t["sector"]),
-                "description": f"{t['name']} — demo-tenant",
+                "description": f"{t['name']} — Suvereeniteettianalyysi tenant",
                 "created_at": datetime.now(timezone.utc),
                 "active": True,
             })
+        else:
+            # idempotent: refresh name/sector if changed
+            await db.tenants.update_one({"id": t["id"]}, {"$set": {
+                "name": t["name"], "sector": t["sector"], "sector_hash": sector_hash(t["sector"])
+            }})
 
-    # Users
     users_seed = [
         {"email": "admin@talktoplus.io", "password": "Admin!2026", "full_name": "Anna Tunnuslause", "role": Role.SUPER_ADMIN.value, "tenant_id": "default-tenant"},
-        {"email": "facilitator@talktoplus.io", "password": "Facil!2026", "full_name": "M. Virtanen", "role": Role.FACILITATOR.value, "tenant_id": "default-tenant"},
-        {"email": "exec@talktoplus.io", "password": "Exec!2026", "full_name": "J. Laine", "role": Role.EXECUTIVE.value, "tenant_id": "default-tenant"},
+        {"email": "facilitator@talktoplus.io", "password": "Facil!2026", "full_name": "Matti Korhonen", "role": Role.FACILITATOR.value, "tenant_id": "default-tenant"},
+        {"email": "exec@talktoplus.io", "password": "Exec!2026", "full_name": "Anna Virtanen", "role": Role.EXECUTIVE.value, "tenant_id": "default-tenant"},
     ]
     for u in users_seed:
         if not await db.users.find_one({"email": u["email"]}):
@@ -1563,116 +1629,113 @@ async def seed_demo():
                 "created_at": datetime.now(timezone.utc),
             })
 
-    # Strategy doc
+    # Strategy doc (Metso Outotec)
     if await db.strategy_docs.count_documents({"tenant_id": "default-tenant"}) == 0:
         txt = (
-            "Strategia 2026-2028: Nordic Tech Oyj kasvattaa kansainvälistä liiketoimintaa 40% "
-            "panostamalla cloud-tuotteisiin, AI-osaamiseen ja asiakaskokemukseen. "
-            "Kriittiset kyvykkyydet: DevOps-osaaminen, datapohjainen myynti, "
-            "globaali kumppaniverkosto. Resurssit: 25 uutta kehittäjää H1, "
-            "20M€ investointi AI-alustaan. Muutosjohtaminen: läpinäkyvä viestintä, "
-            "viikoittaiset town hall -kokoukset, selkeä vastuunjako tuotelinjoittain."
+            "Metso Outotec strategia 2026: kestävän kaivosteollisuuden kärkitoimittajaksi. "
+            "Painopisteet: digitaalinen huolto-alusta, alihankkijoiden laatuauditit, "
+            "Q3 ERP-migraatio, henkilöstön sitouttaminen muutoshankkeisiin. "
+            "Kriittiset kyvykkyydet: insinöörikapasiteetti, datapohjainen päätöksenteko, "
+            "alihankkijaverkoston laadunhallinta."
         )
         vec = semantic_embed(txt)
         await db.strategy_docs.insert_one({
             "id": str(uuid.uuid4()), "tenant_id": "default-tenant",
-            "title": "Nordic Tech Strategia 2026-2028",
+            "title": "Metso Outotec — Strategia 2026",
             "content": txt, "chunks": 4,
             "uploaded_by": "Anna Tunnuslause",
             "created_at": datetime.now(timezone.utc), "vector": vec,
         })
 
-    # Signals + validation → swarm fragments
-    if await db.signals.count_documents({}) == 0:
+    # Wipe and reseed signals/cards/fragments to guarantee non-repeating rich data
+    if await db.signals.count_documents({}) < 12 or not await db.signals.find_one({"content": {"$regex": "Q3-projektin"}}):
+        await db.signals.delete_many({})
+        await db.action_cards.delete_many({})
+        await db.swarm_fragments.delete_many({})
+        await db.universal_bottlenecks.delete_many({})
+
+        FACILITATORS = ["Matti Korhonen", "Anna Virtanen", "Jukka Mäkinen"]
+
+        # 12 signals across 3 tenants — exact problem-statement copy
         demo_signals = [
-            # default-tenant
-            {"t": "default-tenant", "bu": "Engineering", "author": "M. Virtanen",
-             "content": "Resurssipula kriittisessä osaamisessa hidastaa AI-alustan kehitystä merkittävästi. Kehittäjät ovat jo ylikuormittuneita.",
-             "rl": "CRITICAL", "cat": "resources", "age_h": 0.4},
-            {"t": "default-tenant", "bu": "Operations", "author": "A. Korhonen",
-             "content": "Muutosviestinnän puute aiheuttaa epävarmuutta tiimeissä. Town hall -käytännöt eivät ole toteutuneet.",
-             "rl": "HIGH", "cat": "engagement", "age_h": 1.2},
-            {"t": "default-tenant", "bu": "Product", "author": "J. Laine",
-             "content": "Koulutusresurssien riittämättömyys uusiin cloud-teknologioihin huolestuttaa tuotepäälliköitä.",
-             "rl": "MODERATE", "cat": "capabilities", "age_h": 2.1},
-            {"t": "default-tenant", "bu": "Data & Analytics", "author": "S. Nieminen",
-             "content": "Työkalujen integroinnin haasteet vaikuttavat datapohjaiseen päätöksentekoon. Prosessit ovat sujuvat mutta hieman hajallaan.",
-             "rl": "LOW", "cat": "process", "age_h": 3.0},
-            {"t": "default-tenant", "bu": "Engineering", "author": "K. Mäkinen",
-             "content": "Resurssipula estää DevOps-käytäntöjen laajentamisen muihin tiimeihin. Tämä on blokkeri.",
-             "rl": "CRITICAL", "cat": "resources", "age_h": 5.0},
-            # Tech sector competitor -> reinforces bottleneck
-            {"t": "default-tenant", "bu": "Sales", "author": "P. Heikkinen",
-             "content": "Asiakaspalaute hidastaa myyntisyklin toimeenpanoa. Hyvä signaali silti, saadaan korjattua.",
-             "rl": "LOW", "cat": "engagement", "age_h": 8.0},
-            {"t": "default-tenant", "bu": "Engineering", "author": "R. Salonen",
-             "content": "Critical blocker: osaamisvaje Kubernetes-operoinnissa, tuotanto-ympäristö riskialtis.",
-             "rl": "CRITICAL", "cat": "capabilities", "age_h": 12.0},
-            {"t": "default-tenant", "bu": "HR", "author": "L. Nieminen",
-             "content": "Sitoutumisen lasku havaittavissa eksitti-haastatteluissa. Huoli organisaatiotasolla.",
-             "rl": "HIGH", "cat": "engagement", "age_h": 20.0},
-            {"t": "default-tenant", "bu": "Product", "author": "T. Ahonen",
-             "content": "Asiakasaisakaslukumäärä kasvussa. Moderate capacity issue mutta hallinnassa.",
-             "rl": "MODERATE", "cat": "resources", "age_h": 30.0},
-            {"t": "default-tenant", "bu": "Finance", "author": "H. Koski",
-             "content": "Budjettien läpinäkyvyys on parantunut. Good execution progress.",
-             "rl": "LOW", "cat": "process", "age_h": 48.0},
-            {"t": "default-tenant", "bu": "Engineering", "author": "V. Rantanen",
-             "content": "High risk: integration vendors delaying delivery of core API.",
-             "rl": "HIGH", "cat": "capabilities", "age_h": 60.0},
-            {"t": "default-tenant", "bu": "Operations", "author": "E. Laakso",
-             "content": "Moderate bottleneck in procurement pipeline affecting Q2.",
-             "rl": "MODERATE", "cat": "process", "age_h": 72.0},
-            # Other tenants
-            {"t": "tenant-health", "bu": "Clinical", "author": "Dr. Saari",
-             "content": "Kriittinen resurssipula hoitajien rekrytoinnissa uuteen yksikköön.",
-             "rl": "CRITICAL", "cat": "resources", "age_h": 6.0},
-            {"t": "tenant-finance", "bu": "Risk", "author": "Rauno M.",
-             "content": "Severe resource gap in compliance team during regulation update.",
-             "rl": "CRITICAL", "cat": "resources", "age_h": 4.0},
-            {"t": "tenant-energy", "bu": "Field Ops", "author": "Lauri P.",
-             "content": "Osaamisvaje kriittisissä turbiinioperaatiossa: asiantuntijat eläköityvät.",
-             "rl": "HIGH", "cat": "capabilities", "age_h": 14.0},
-            {"t": "tenant-finance", "bu": "Ops", "author": "Mika V.",
-             "content": "Resurssipula syntynyt IT-kehityspuolelle, projektit jäljessä.",
-             "rl": "HIGH", "cat": "resources", "age_h": 10.0},
+            # Metso Outotec
+            {"t": "default-tenant", "bu": "Engineering", "rl": "HIGH", "cat": "resources", "age_d": 7,
+             "content": "Resurssipula hidastaa Q3-projektin toimitusta — 3 insinööriä puuttuu tiimistä."},
+            {"t": "default-tenant", "bu": "Quality", "rl": "CRITICAL", "cat": "process", "age_d": 2,
+             "content": "Laadunvalvontaprosessi ei kata alihankkijatasoa — löytöjä auditissa."},
+            {"t": "default-tenant", "bu": "IT", "rl": "MODERATE", "cat": "process", "age_d": 12,
+             "content": "Uusi ERP-järjestelmä aiheuttaa katkoksia tilausten käsittelyssä."},
+            {"t": "default-tenant", "bu": "HR", "rl": "HIGH", "cat": "engagement", "age_d": 5,
+             "content": "Henkilöstön sitoutuminen Q2 muutoshankkeeseen alle tavoitetason (42%)."},
+            # Nordea
+            {"t": "tenant-nordea", "bu": "Compliance", "rl": "HIGH", "cat": "resources", "age_d": 3,
+             "content": "Compliance-tiimi ylikuormittunut — uusi regulaatio vaatii 200h lisäkapasiteettia."},
+            {"t": "tenant-nordea", "bu": "Customer Service", "rl": "MODERATE", "cat": "process", "age_d": 9,
+             "content": "Asiakaspalvelun vasteaika kasvanut 34% — syy tuntematon."},
+            {"t": "tenant-nordea", "bu": "Strategy", "rl": "LOW", "cat": "engagement", "age_d": 18,
+             "content": "Strateginen kumppanuusneuvottelu jumissa — päätöksentekijä ei vastaa."},
+            {"t": "tenant-nordea", "bu": "IT", "rl": "MODERATE", "cat": "capabilities", "age_d": 6,
+             "content": "IT-infrastruktuuri ei tue hybridityömallia — 40% etätyöntekijöistä raportoi ongelmia."},
+            # Wärtsilä
+            {"t": "tenant-wartsila", "bu": "Supply Chain", "rl": "CRITICAL", "cat": "resources", "age_d": 1,
+             "content": "Toimitusketjun häiriö — kriittinen komponentti viivästyy 6 viikkoa."},
+            {"t": "tenant-wartsila", "bu": "Strategy", "rl": "HIGH", "cat": "engagement", "age_d": 4,
+             "content": "Johdon ja operatiivisen tason strategiaymmärrys eroaa merkittävästi."},
+            {"t": "tenant-wartsila", "bu": "Digital", "rl": "HIGH", "cat": "process", "age_d": 8,
+             "content": "Uusi digitalisaatiohanke ilman selkeää omistajuutta — 3 tiimiä, 0 vastuuhenkilöä."},
+            {"t": "tenant-wartsila", "bu": "HR", "rl": "CRITICAL", "cat": "capabilities", "age_d": 2,
+             "content": "Henkilöstövaihtuvuus kasvanut 28% — exit-haastattelut viittaavat johtamisongelmiin."},
         ]
+
+        # Statuses & impact scores per problem statement: 3 pending_validation, 2 validated, 2 in_progress, 1 dismissed (for default-tenant cards)
+        # We'll mark all signals as VALIDATED (so they show up in analytics) but distribute card statuses.
+        IMPACT_SCORES = [6, 8, 9, 4, 7, 9, 8, 5, 7, 6, 8, 9]
+        CARD_STATUSES = ["pending_validation", "validated", "in_progress", "pending_validation",
+                         "in_progress", "validated", "pending_validation", "dismissed",
+                         "in_progress", "validated", "pending_validation", "in_progress"]
+        SWARM_VERIFIED_FLAGS = [True, False, True, False, True, False, False, True, True, False, False, True]
+
         now = datetime.now(timezone.utc)
-        for s in demo_signals:
-            t_ago = now - timedelta(hours=s["age_h"])
+        for i, s in enumerate(demo_signals):
+            t_ago = now - timedelta(days=s["age_d"])
             sid = str(uuid.uuid4())
             vec = semantic_embed(s["content"])
-            summary = f"Signaali osoittaa {s['cat']}-pohjaisen toimeenpano-ongelman tasolla {s['rl']}."
-            gaps = [
-                "Omistajuus epäselvä",
-                "Mittareita ei seurata viikkotasolla",
-                "Resurssit eivät vastaa tavoitetta",
-            ]
+            summary = f"Toimeenpanoriski tasolla {s['rl']} kategoriassa {s['cat']}: {s['content'][:80]}"
+            gaps_by_cat = {
+                "resources": ["Kapasiteettilisäys ei toteutunut sovitussa aikataulussa", "Resurssien priorisointi epäselvä", "Tiimin ylikuormitus näkyy mittareissa"],
+                "capabilities": ["Osaamiskartoitus puuttuu", "Koulutusbudjetti alimitoitettu", "Senior-tason siirtyminen ei johda osaamisen siirtoon"],
+                "engagement": ["Sisäinen viestintä katkonaista", "Town hall -käytänteet eivät toteudu", "Palautteenkeruu puuttuu"],
+                "process": ["Vastuuhenkilö epäselvä", "Mittareita ei seurata viikkotasolla", "Standardiprosessi puuttuu kriittisessä vaiheessa"],
+            }
+            gaps = gaps_by_cat[s["cat"]]
             questions = [
                 "Kuka omistaa tämän seuraavat 2 viikkoa?",
                 "Mitä konkreettista tukea tarvitaan 48h sisällä?",
+                "Mihin strategiseen tavoitteeseen tämä vaikuttaa eniten?",
             ]
+            facilitator = FACILITATORS[i % 3]
             doc = {
                 "id": sid, "tenant_id": s["t"],
                 "content": s["content"], "source": "manual",
-                "business_unit": s["bu"], "author": s["author"],
+                "business_unit": s["bu"], "author": facilitator,
                 "submitted_at": t_ago,
                 "status": SignalStatus.VALIDATED.value,
                 "risk_level": s["rl"],
-                "confidence": 0.78 + (0.15 if s["rl"] == "CRITICAL" else 0.05),
+                "confidence": round(0.72 + (0.20 if s["rl"] == "CRITICAL" else 0.10 if s["rl"] == "HIGH" else 0.05), 2),
                 "summary": summary,
                 "execution_gaps": gaps,
-                "hidden_assumptions": ["Oletetaan nykyinen kapasiteetti riittää"],
+                "hidden_assumptions": ["Oletetaan nykyinen kapasiteetti riittää", "Vastuunjako ymmärretään yhtenäisesti"],
                 "facilitator_questions": questions,
                 "category": s["cat"],
                 "semantic_vector": vec,
-                "validated_by": "M. Virtanen",
+                "validated_by": facilitator,
                 "validated_at": t_ago + timedelta(minutes=22),
-                "validation_note": "Verified against strategy",
+                "validation_note": "Verifioitu strategiaa vasten",
                 "override_risk_level": None,
                 "swarm_fragment_id": None, "action_card_id": None,
             }
             await db.signals.insert_one(doc.copy())
+
             # Swarm fragment
             tenant = await db.tenants.find_one({"id": s["t"]}, {"_id": 0})
             frag_id = str(uuid.uuid4())
@@ -1683,42 +1746,135 @@ async def seed_demo():
                 "category": s["cat"], "semantic_vector": vec,
                 "created_at": doc["validated_at"],
             })
-            # Action card
+
+            # Prescriptive Action Card — unique per signal
+            CARD_TITLES_PLAYBOOKS = {
+                0: ("Insinöörikapasiteetin pikalisäys Q3-toimitukseen",
+                    "Kohdennetaan 3 insinööriä ulkoisilta kumppaneilta 14 päivän sisällä ja varmistetaan tiedonsiirto kahden viikon yhteistyöjaksolla. Vältetään toimitusriskin eskaloituminen, joka vaarantaisi 18 M€ Q3-arvon.",
+                    ["1. Aktivoi raamisopimus 2 päivän sisällä Tieto Engineering -kumppanin kanssa",
+                     "2. Allokoi 10 päivän knowledge transfer ennen kriittistä faasia",
+                     "3. Päivitä Q3-toimitusgantt ja viesti asiakkaalle proaktiivisesti",
+                     "4. Aseta viikoittainen burn-down -mittari ohjausryhmään",
+                     "5. Päätöspiste 4 vk: jatka vai eskaloi C-tasolle"]),
+                1: ("Alihankkijatason laatuauditit 30 päivässä",
+                    "Käynnistetään top-10 alihankkijan laatuauditit ja luodaan jatkuva valvontamalli, jolla estetään löytöjen toistuminen tulevissa audiointiin. Painopiste kriittisessä jäähdytyskomponenttilinjassa.",
+                    ["1. Listaa top-10 alihankkijaa volyymin ja kriittisyyden perusteella",
+                     "2. Suorita on-site -audit jokaiselle 30 vk:n aikana",
+                     "3. Implementoi yhteinen laatu-KPI -raportointi (kuukausittain)",
+                     "4. Sopimusrikkomus-eskalaatiomalli alihankkijoille",
+                     "5. Q1-2027 katselmus: vähennä laatuvirheet -50%"]),
+                2: ("ERP-katkojen pikadiagnoosi ja stabilointi",
+                    "Perustetaan ERP War Room 48 tunnin sisällä, identifioidaan 3 suurinta katkoslähdettä ja stabiloidaan tilaustenkäsittely. Tilausvolyymin liiketoimintavaikutus on 4 M€ kuukaudessa.",
+                    ["1. Kokoa War Room: IT lead + ERP vendor + Operations lead",
+                     "2. Diagnosoi top-3 katkos-juurisyyt 5 päivässä",
+                     "3. Hot-fix priorisointi: tilausreititys ensin",
+                     "4. Daily stand-up viikon ajan, kunnes vakaa",
+                     "5. Post-mortem ja preventiivinen toimenpidelista"]),
+                3: ("Sitoutumisen nostaminen Q2-muutoshankkeessa",
+                    "Käynnistetään fokusryhmäkierros 3 yksikössä viikon sisällä, identifoidaan 5 keskeisintä huolta ja vastataan niihin avoimella town hall -formaatilla. Tavoite 65% sitoutuminen Q3-mittauksessa.",
+                    ["1. Pulse-kysely 200 työntekijälle 3 päivän sisällä",
+                     "2. 6 fokusryhmää: 3 yksikköä × 2 ryhmää",
+                     "3. Top-5 huolen julkinen vastausnäyttö",
+                     "4. Town Hall livestreamilla Q&A:llä",
+                     "5. Q3 sitoutumismittaus + raportti henkilöstöjohdolle"]),
+                4: ("Compliance-kapasiteetin nopea skaalaus",
+                    "Hankitaan 200h ulkoinen compliance-kapasiteetti seuraaviksi 2 kuukaudeksi ja samalla automatisoidaan 30% tarkistustyöstä RegTech-työkalulla. Riski regulaattorin sanktiosta vältetään.",
+                    ["1. RFP-kierros 3 compliance-vendorille viikon sisällä",
+                     "2. Allekirjoita 8 viikon kapasiteettisopimus 200h:lle",
+                     "3. Pilotoi Workiva/MetricStream automaatio top-3 prosessissa",
+                     "4. Mittari: compliance-läpimenoaika -40%",
+                     "5. Päätöspiste: ostetaanko vendor-tool pysyvästi Q4:llä"]),
+                5: ("Asiakaspalvelun juurisyyanalyysi vasteajan kasvuun",
+                    "Suoritetaan kanavakohtainen analyysi 7 päivässä, kohdennetaan resurssit ruuhkahuippuihin ja otetaan käyttöön self-service-pilotti TOP-5 kysymystyypille. Tavoite -20% vasteaika 30 päivässä.",
+                    ["1. Kanava-data-pull viim. 90 pv: chat / puhelu / email",
+                     "2. Identifioi 3 ruuhka-aikaa ja 5 toistuvaa kysymystä",
+                     "3. Self-service pilotti chatbotilla top-5 kysymyksiin",
+                     "4. Roster-optimointi ruuhka-aikoina",
+                     "5. KPI-mittaus 30 vk:n jälkeen"]),
+                6: ("Strategisen kumppaneiden eskalaatiomalli",
+                    "Luodaan 2-tason eskalaatiomalli kumppanuusneuvotteluihin: 7 päivää ilman vastausta → tason 2 yhteyshenkilö, 14 päivää → C-tason eskalaatio. Estetään strategisten projektien jumiutuminen.",
+                    ["1. Mallinna eskalaatiopolku: päivät 0-7-14",
+                     "2. Nimeä C-tason sponsor jokaiselle TOP-10 kumppanille",
+                     "3. Kvartaalitarkastelu sponsoreille",
+                     "4. SLA kirjaus partner-sopimuksiin",
+                     "5. Päivitä CRM eskalaatiotrigger-säännöillä"]),
+                7: ("Hybridityömallin IT-tukikuilun sulkeminen",
+                    "Suoritetaan hybridityö-IT-auditti 14 päivässä, priorisoidaan VPN/wifi/laitteistovaivat ja toteutetaan korjaukset vaiheessa 1 (30 päivää). Tavoite: ongelmat raportointi alle 10%.",
+                    ["1. Hybridi-IT pulssi-kysely 500 etätyöntekijälle",
+                     "2. Top-3 ongelman priorisointi (VPN / Wifi / Endpoint)",
+                     "3. Vaihe 1: pikakorjaukset 30 vk:n sisällä",
+                     "4. Vaihe 2: laitteistopäivityskierros budjetoitu",
+                     "5. Mittaus: tikettilaadun lasku -50%"]),
+                8: ("Kriittisen komponentin toimitusketjun risk-mitigaatio",
+                    "Aktivoidaan secondary supplier 7 päivässä, varastoidaan 12 viikon turvavarasto kriittisille tuotteille ja neuvotellaan toimituksen siirtohinta minimiin. Tavoite: 0 viivettä asiakassuorituksiin.",
+                    ["1. Secondary supplier -aktivointi: tilaus + ekspressitoimitus",
+                     "2. 12 vk:n turvavarasto kriittisille SKU:ille",
+                     "3. Asiakasviestintä proaktiivisesti TOP-20",
+                     "4. Vaihtoehtoisen reitityksen logistiikka",
+                     "5. Q4 supplier-diversifikaatiostrategia"]),
+                9: ("Strategian operationalisointi: johdon ja operatiivisen tason yhteinen kieli",
+                    "Pidetään kahden päivän strategia-alignment -työpaja johdolle ja operatiivisille esimiehille, luodaan 5 selkeää OKR:ää kvartaalille. Mitataan ymmärrystä OKR-pulssikyselyllä 30 päivän välein.",
+                    ["1. 2 pv strategia-alignment offsite (CEO + 30 esimiestä)",
+                     "2. Yhteiset 5 Q4 OKR:ää, mitattavat",
+                     "3. OKR-pulssi joka 30 vk: ymmärrysprosentti tavoite >85%",
+                     "4. Esimiesten cascade-vastuu omaan tiimiin",
+                     "5. Q1-2027 katselmus + säätö"]),
+                10: ("Digitalisaatiohankkeen omistajuusmalli",
+                     "Nimetään yksi C-tason sponsori ja yksi product owner 3 päivässä, perustetaan steering group ja siirretään kolmen tiimin työ yhteen backlogiin. Estetään 6 kk hukkainvestointi.",
+                     ["1. C-tason sponsoripäätös 3 päivässä",
+                      "2. Product Owner -roolitus, raamisopimus",
+                      "3. Steering group: 5 jäsentä, kahden viikon välein",
+                      "4. Yhteinen backlog Jiraan, kolmen tiimin yhdistäminen",
+                      "5. 30 vk:n re-baselining päätös"]),
+                11: ("Henkilöstövaihtuvuuden pysäyttäminen — johtamiskvaliteettiprojekti",
+                     "Käynnistetään 360°-arvioinnit johtoryhmälle, allokoidaan 1 coach per esimies seuraaviksi 6 kk. Mitataan eNPS:ä kuukausittain, tavoite vaihtuvuus alle 12% Q4-Q1.",
+                     ["1. 360° kierros TOP-30 esimiehelle 30 vk:n sisällä",
+                      "2. Executive coach -ohjelma 6 kk",
+                      "3. eNPS kuukausittain (anonymously)",
+                      "4. Exit-data deep-dive: 3 toistuvaa juurisyytä",
+                      "5. Henkilöstöjohdon kvartaaliraportti hallitukselle"]),
+            }
+
+            title, summary_card, playbook = CARD_TITLES_PLAYBOOKS[i]
+            patterns = []
+            if SWARM_VERIFIED_FLAGS[i]:
+                patterns = [
+                    f"Vahvistettu 7 vastaavassa organisaatiossa — {tenant['sector']} -sektori",
+                    "Mediaaniaikataulu 35 päivää, onnistumisaste 78%",
+                    "Top success factor: nopea omistajuusnimitys (<3 vk)",
+                ]
             card_id = str(uuid.uuid4())
             await db.action_cards.insert_one({
                 "id": card_id, "tenant_id": s["t"], "signal_id": sid,
-                "title": f"Interventio: {s['cat'].title()} bottleneck",
-                "summary": f"Suositeltu korjaava toimenpideketju {s['cat']}-aukolle tasolla {s['rl']}.",
-                "playbook": [
-                    "1. Nimeä omistaja ja tukitiimi 48h sisään",
-                    "2. Kartoita resurssit vs. tavoite",
-                    "3. Priorisoi top-3 toimenpidettä",
-                    "4. Seuranta viikkotasolla 6 vk",
-                    "5. Go/no-go -päätös 4 vk kohdalla",
-                ],
-                "rag_context_used": ["Strategia 2026-2028"],
-                "swarm_patterns_used": [],
-                "impact_score": 4 if s["rl"] in ("LOW", "MODERATE") else None,
-                "swarm_verified": False,
+                "title": title,
+                "summary": summary_card,
+                "playbook": playbook,
+                "rag_context_used": ["Strategia 2026"],
+                "swarm_patterns_used": patterns,
+                "impact_score": IMPACT_SCORES[i],
+                "swarm_verified": SWARM_VERIFIED_FLAGS[i],
+                "swarm_verified_count": 7 if SWARM_VERIFIED_FLAGS[i] else 0,
+                "status": CARD_STATUSES[i],
+                "facilitator": facilitator,
                 "created_at": doc["validated_at"] + timedelta(minutes=1),
             })
             await db.signals.update_one({"id": sid}, {"$set": {"swarm_fragment_id": frag_id, "action_card_id": card_id}})
 
-        # One pending signal for Decision Hub demo
+        # One pending signal for Decision Hub demo (default-tenant)
         pending_sid = str(uuid.uuid4())
-        pending_content = "Tiimimme on huolissaan siitä, että uusien AI-ominaisuuksien julkaisuaikataulua ei pystytä pitämään — kapasiteettia ei ole lisätty sovitusti."
+        pending_content = "Q3-julkaisuaikataulu vaarassa: kahden senior-insinöörin lähtö ei näy kapasiteettisuunnittelussa, ja korvaava rekrytointi on 8 viikkoa myöhässä."
         vec = semantic_embed(pending_content)
         await db.signals.insert_one({
             "id": pending_sid, "tenant_id": "default-tenant",
             "content": pending_content, "source": "howspace",
             "business_unit": "Engineering", "author": "Anonymous",
-            "submitted_at": now - timedelta(minutes=8),
+            "submitted_at": datetime.now(timezone.utc) - timedelta(minutes=14),
             "status": SignalStatus.PENDING.value,
-            "risk_level": "HIGH", "confidence": 0.82,
-            "summary": "AI-ominaisuuksien julkaisuaikataulu vaarassa: kapasiteetti ei vastaa sovittua.",
-            "execution_gaps": ["Kapasiteettilisäys ei toteutunut", "Tiimin viestintä johdon kanssa katkennut"],
-            "hidden_assumptions": ["Oletettu, että rekrytoinnit toteutuvat automaattisesti"],
-            "facilitator_questions": ["Milloin rekrytointilupaus annettiin?", "Kuka omistaa seuraavat 2 vk?"],
+            "risk_level": "HIGH", "confidence": 0.84,
+            "summary": "Q3-julkaisuaikataulu vaarassa kapasiteettivajeen ja viivästyneen rekrytoinnin takia.",
+            "execution_gaps": ["Kapasiteettisuunnittelu ei reagoinut lähtöihin", "Rekrytointiprosessi ei skaalaudu kriittiseen tarpeeseen", "Asiakasviestintä ei proaktiivista"],
+            "hidden_assumptions": ["Oletettu, että lähtevien tilalle saadaan korvaajat 4 vk:n sisällä"],
+            "facilitator_questions": ["Onko Q3-aikataulu uudelleenneuvoteltavissa?", "Voiko ulkoinen kumppani siltarata kapasiteetin?"],
             "category": "resources", "semantic_vector": vec,
             "validated_by": None, "validated_at": None, "validation_note": None,
             "override_risk_level": None, "swarm_fragment_id": None, "action_card_id": None,
@@ -1726,8 +1882,7 @@ async def seed_demo():
 
         await _update_clusters()
 
-    logger.info("Seed complete")
-
+    logger.info("Seed complete (rich data)")
 
 @app.on_event("startup")
 async def startup():

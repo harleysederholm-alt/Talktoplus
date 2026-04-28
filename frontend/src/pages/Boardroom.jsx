@@ -33,7 +33,7 @@ const LevelBadge = ({ level }) => (
 );
 
 export default function Boardroom() {
-  const { t } = useContext(AppCtx);
+  const { t, timeRange, search } = useContext(AppCtx);
   const [heat, setHeat] = useState({});
   const [trend, setTrend] = useState([]);
   const [dist, setDist] = useState([]);
@@ -45,19 +45,34 @@ export default function Boardroom() {
   useEffect(() => {
     Promise.all([
       http.get('/analytics/heatmap'),
-      http.get('/analytics/risk-trend?days=7'),
+      http.get(`/analytics/risk-trend?days=${timeRange}`),
       http.get('/analytics/distribution'),
       http.get('/oracle/alerts'),
       http.get('/swarm/bottlenecks'),
-      http.get('/signals?limit=5'),
+      http.get('/signals?limit=20'),
       http.get('/system/health'),
     ]).then(([h, tr, d, al, bn, sg, sh]) => {
       setHeat(h.data); setTrend(tr.data); setDist(d.data);
       setAlerts(al.data); setBottlenecks(bn.data);
-      setSignals(sg.data.filter(s => s.status !== 'pending').slice(0, 4));
+      setSignals(sg.data.filter(s => s.status !== 'pending'));
       setSys(sh.data);
     }).catch(() => {});
-  }, []);
+  }, [timeRange]);
+
+  // Client-side filter by time range and search keyword for the recent table
+  const filteredSignals = signals.filter(s => {
+    const t = s.validated_at || s.submitted_at;
+    if (!t) return true;
+    const ageDays = (Date.now() - new Date(t).getTime()) / 86400000;
+    if (ageDays > timeRange) return false;
+    if (search) {
+      const q = search.toLowerCase();
+      return (s.content || '').toLowerCase().includes(q) ||
+             (s.business_unit || '').toLowerCase().includes(q) ||
+             (s.summary || '').toLowerCase().includes(q);
+    }
+    return true;
+  }).slice(0, 6);
 
   const totalRisks = dist.reduce((a, x) => a + x.value, 0);
   const timeAgo = (iso) => {
