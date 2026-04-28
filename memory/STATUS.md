@@ -35,6 +35,15 @@
 ## What's NOT done — pick from these in order
 See `/app/docs/01_postgres_qdrant_migration.md` → `07_production_checklist.md`
 
+**Status of each docs item (Apr 2026):**
+- ✅ **docs/03** (Howspace HMAC+nonce): IMPLEMENTED — toggle via `WEBHOOK_STRICT=true`
+- ✅ **docs/04** (Slack/Teams notifications): IMPLEMENTED — UI page at `/notifications`, dispatcher gated by `ENABLE_DISPATCHER=true`
+- ✅ **docs/05** (PDF/Slack export): IMPLEMENTED — PDF works, Slack push uses dispatcher
+- ✅ **docs/06** (Local vLLM abstraction): IMPLEMENTED — `USE_LOCAL_LLM=true` + `VLLM_BASE_URL` (cannot test without GPU)
+- ✅ **docs/07** (Production security): security headers, rate limiting, CORS allowlist applied
+- 🟡 **docs/01** (Postgres+Qdrant): SCAFFOLDED — `postgres_adapter.py` stub + feature flag; full migration deferred (requires prod infra)
+- 🟡 **docs/02** (Server.py split): DEFERRED — see `backend/_split_plan.py` for target structure
+
 ## Files modified to know
 - `/app/backend/server.py` (1400 LOC — split planned in docs/02)
 - `/app/backend/.env` (do NOT change MONGO_URL, DB_NAME)

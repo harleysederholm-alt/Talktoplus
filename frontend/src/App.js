@@ -12,6 +12,7 @@ import ActionCards from './pages/ActionCards';
 import StrategyRAG from './pages/StrategyRAG';
 import Tenants from './pages/Tenants';
 import SystemHealth from './pages/SystemHealth';
+import Notifications from './pages/Notifications';
 
 export const AppCtx = React.createContext(null);
 
@@ -61,6 +62,7 @@ export default function App() {
             <Route path="/rag" element={<StrategyRAG />} />
             <Route path="/tenants" element={<Tenants />} />
             <Route path="/system" element={<SystemHealth />} />
+            <Route path="/notifications" element={<Notifications />} />
             <Route path="*" element={<Navigate to="/" />} />
           </Route>
         </Routes>

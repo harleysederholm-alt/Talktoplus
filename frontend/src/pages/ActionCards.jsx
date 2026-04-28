@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useContext } from 'react';
 import { AppCtx } from '../App';
-import { http } from '../api';
-import { CheckCircle, Star } from '@phosphor-icons/react';
+import { http, API } from '../api';
+import { CheckCircle, Star, FilePdf } from '@phosphor-icons/react';
 
 export default function ActionCards() {
   const { t } = useContext(AppCtx);
@@ -27,11 +27,27 @@ export default function ActionCards() {
           <div key={c.id} className="col-span-12 md:col-span-6 tkp-card p-6" data-testid={`card-${c.id}`}>
             <div className="flex items-start justify-between gap-3 mb-3">
               <div className="font-heading text-lg font-bold tracking-tight">{c.title}</div>
-              {c.swarm_verified && (
-                <span className="sev-LOW border px-2 py-0.5 rounded-sm text-[10px] font-bold tracking-widest uppercase flex items-center gap-1">
-                  <CheckCircle size={10} weight="fill" />{t.actions.verified}
-                </span>
-              )}
+              <div className="flex items-center gap-2">
+                {c.swarm_verified && (
+                  <span className="sev-LOW border px-2 py-0.5 rounded-sm text-[10px] font-bold tracking-widest uppercase flex items-center gap-1">
+                    <CheckCircle size={10} weight="fill" />{t.actions.verified}
+                  </span>
+                )}
+                <button
+                  data-testid={`export-${c.id}`}
+                  onClick={async () => {
+                    const r = await http.get(`/action-cards/${c.id}/export.pdf`, { responseType: 'blob' });
+                    const url = URL.createObjectURL(r.data);
+                    const a = document.createElement('a');
+                    a.href = url; a.download = `action-card-${c.id.slice(0, 8)}.pdf`; a.click();
+                    URL.revokeObjectURL(url);
+                  }}
+                  className="px-2 py-1 text-[10px] font-bold tracking-widest uppercase border border-slate-200 rounded-sm hover:border-ink flex items-center gap-1"
+                  title="Export PDF"
+                >
+                  <FilePdf size={12} weight="duotone" />PDF
+                </button>
+              </div>
             </div>
             <div className="text-sm text-slate-600 leading-relaxed mb-4">{c.summary}</div>
 

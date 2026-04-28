@@ -5,7 +5,7 @@ import { http } from '../api';
 import {
   Television, Broadcast, ShieldCheck, UsersThree, Cards,
   SquaresFour, Buildings, Heartbeat, MagnifyingGlass,
-  Bell, SignOut, Globe
+  Bell, SignOut, Globe, BellRinging
 } from '@phosphor-icons/react';
 
 const LogoMark = () => (
@@ -76,6 +76,7 @@ export default function Layout() {
           <NavItem to="/rag" icon={SquaresFour} label={t.nav.rag} sub={t.nav.ragSub} />
           <NavItem to="/tenants" icon={Buildings} label={t.nav.tenants} sub={t.nav.tenantsSub} />
           <NavItem to="/system" icon={Heartbeat} label={t.nav.system} sub={t.nav.systemSub} />
+          <NavItem to="/notifications" icon={BellRinging} label="Notifications" sub="Slack / Teams" />
         </nav>
 
         {/* Global Risk Index widget */}

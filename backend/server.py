@@ -39,6 +39,18 @@ JWT_EXPIRE_MINUTES = int(os.environ["JWT_EXPIRE_MINUTES"])
 EMERGENT_LLM_KEY = os.environ["EMERGENT_LLM_KEY"]
 WEBHOOK_SECRET = os.environ["WEBHOOK_HMAC_SECRET"]
 
+# Feature flags & prod hardening
+USE_LOCAL_LLM = os.environ.get("USE_LOCAL_LLM", "false").lower() == "true"
+VLLM_BASE_URL = os.environ.get("VLLM_BASE_URL", "")
+VLLM_MODEL = os.environ.get("VLLM_MODEL", "google/gemma-4b-it")
+USE_POSTGRES = os.environ.get("USE_POSTGRES", "false").lower() == "true"  # docs/01 stub
+ENABLE_DISPATCHER = os.environ.get("ENABLE_DISPATCHER", "false").lower() == "true"
+WEBHOOK_STRICT = os.environ.get("WEBHOOK_STRICT", "false").lower() == "true"
+RATE_LIMIT_ENABLED = os.environ.get("RATE_LIMIT_ENABLED", "true").lower() == "true"
+CORS_ORIGINS_RAW = os.environ.get("CORS_ORIGINS", "*")
+CORS_ALLOW_LIST = [o.strip() for o in CORS_ORIGINS_RAW.split(",")] if CORS_ORIGINS_RAW != "*" else ["*"]
+NOTIFICATION_FERNET_KEY = os.environ.get("NOTIFICATION_FERNET_KEY", "")
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("talktoplus")
 
@@ -295,16 +307,41 @@ You respond ONLY with strict JSON, no markdown, no prose. Schema:
 Be direct, critical, Finnish-enterprise blunt when input is Finnish. Focus on execution, not strategy itself."""
 
 
+async def _llm_chat_json(system_prompt: str, user_text: str, session_id: str) -> str:
+    """Unified LLM call. If USE_LOCAL_LLM=true → vLLM (OpenAI-compatible).
+    Else → Gemini 3 Flash via emergentintegrations. Returns raw response text."""
+    if USE_LOCAL_LLM and VLLM_BASE_URL:
+        # vLLM (Sovereign Edge — docs/06). OpenAI-compatible endpoint.
+        try:
+            from openai import AsyncOpenAI
+            client = AsyncOpenAI(base_url=VLLM_BASE_URL, api_key="not-needed")
+            resp = await client.chat.completions.create(
+                model=VLLM_MODEL,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_text},
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.2,
+                max_tokens=800,
+            )
+            return resp.choices[0].message.content or ""
+        except ImportError:
+            logger.error("openai package missing; falling back to Gemini")
+    # Default: Gemini 3 Flash
+    from emergentintegrations.llm.chat import LlmChat, UserMessage
+    chat = LlmChat(
+        api_key=EMERGENT_LLM_KEY,
+        session_id=session_id,
+        system_message=system_prompt,
+    ).with_model("gemini", "gemini-3-flash-preview")
+    return await chat.send_message(UserMessage(text=user_text))
+
+
 async def analyze_signal_ai(content: str, strategy_context: str = "") -> dict:
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id=f"signal-{uuid.uuid4()}",
-            system_message=AI_SYSTEM_PROMPT,
-        ).with_model("gemini", "gemini-3-flash-preview")
         user_text = f"STRATEGY CONTEXT:\n{strategy_context[:2000]}\n\nSIGNAL:\n{content}\n\nReturn JSON only."
-        resp = await chat.send_message(UserMessage(text=user_text))
+        resp = await _llm_chat_json(AI_SYSTEM_PROMPT, user_text, f"signal-{uuid.uuid4()}")
         txt = resp.strip()
         # Strip code fences if any
         if txt.startswith("```"):
@@ -367,14 +404,8 @@ Be specific, operational, enterprise-ready."""
 
 async def generate_action_card_ai(signal_summary: str, gaps: List[str], patterns: List[str]) -> dict:
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id=f"card-{uuid.uuid4()}",
-            system_message=PRESCRIPTIVE_PROMPT,
-        ).with_model("gemini", "gemini-3-flash-preview")
         msg = f"""VALIDATED SIGNAL:\n{signal_summary}\n\nEXECUTION GAPS:\n{chr(10).join('- '+g for g in gaps)}\n\nUNIVERSAL SUCCESS PATTERNS FROM SWARM:\n{chr(10).join('- '+p for p in patterns) or '(none yet)'}\n\nReturn JSON."""
-        resp = await chat.send_message(UserMessage(text=msg))
+        resp = await _llm_chat_json(PRESCRIPTIVE_PROMPT, msg, f"card-{uuid.uuid4()}")
         txt = resp.strip()
         if txt.startswith("```"):
             txt = txt.split("```")[1]
@@ -447,9 +478,31 @@ def sector_hash(sector: str) -> str:
 app = FastAPI(title="TALK TO+ BDaaS", version="1.3.0")
 api = APIRouter(prefix="/api")
 
+# ----- Rate limiting (docs/07) -----
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+limiter = Limiter(key_func=get_remote_address, enabled=RATE_LIMIT_ENABLED)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
+
+# ----- Security headers (docs/07) -----
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    resp = await call_next(request)
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["X-Frame-Options"] = "DENY"
+    resp.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    resp.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+    if request.url.scheme == "https":
+        resp.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return resp
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], allow_credentials=True,
+    allow_origins=CORS_ALLOW_LIST, allow_credentials=True,
     allow_methods=["*"], allow_headers=["*"],
 )
 
@@ -483,7 +536,8 @@ async def register(body: RegisterReq):
 
 
 @api.post("/auth/login", response_model=TokenResp)
-async def login(body: LoginReq):
+@limiter.limit("10/minute")
+async def login(request: Request, body: LoginReq):
     u = await db.users.find_one({"email": body.email.lower()})
     if not u or not verify_password(body.password, u["password_hash"]):
         raise HTTPException(401, "Invalid credentials")
@@ -1088,21 +1142,57 @@ def verify_hmac(raw: bytes, sig_header: Optional[str]) -> bool:
 
 
 @api.post("/webhook/{tenant_id}")
+@limiter.limit("60/minute")
 async def webhook_receive(
+    request: Request,
     tenant_id: str,
-    req: Request,
     x_signature: Optional[str] = Header(None),
+    x_timestamp: Optional[str] = Header(None),
+    x_nonce: Optional[str] = Header(None),
     x_source: Optional[str] = Header("howspace"),
 ):
-    raw = await req.body()
-    # dev-friendly: accept if hmac present OR skip in demo mode
-    if x_signature and not verify_hmac(raw, x_signature):
-        raise HTTPException(401, "Invalid HMAC")
+    raw = await request.body()
+    # Strict mode (production): require all three
+    if WEBHOOK_STRICT:
+        if not x_signature or not verify_hmac(raw, x_signature):
+            raise HTTPException(401, "Invalid HMAC")
+        try:
+            ts = int(x_timestamp or "0")
+            now_s = int(datetime.now(timezone.utc).timestamp())
+            if abs(now_s - ts) > 300:
+                raise HTTPException(401, "Stale timestamp")
+        except ValueError:
+            raise HTTPException(401, "Invalid timestamp")
+        if not x_nonce:
+            raise HTTPException(401, "Missing nonce")
+        if await db.webhook_nonces.find_one({"nonce": x_nonce}):
+            raise HTTPException(409, "Replay detected")
+        await db.webhook_nonces.insert_one({
+            "nonce": x_nonce, "tenant_id": tenant_id,
+            "created_at": datetime.now(timezone.utc),
+        })
+    else:
+        # Dev-friendly: only verify HMAC if signature provided
+        if x_signature and not verify_hmac(raw, x_signature):
+            raise HTTPException(401, "Invalid HMAC")
     try:
         payload = json.loads(raw.decode() or "{}")
     except json.JSONDecodeError:
         raise HTTPException(400, "Invalid JSON")
-    content = payload.get("content") or payload.get("message") or ""
+    # Source-specific payload mapping (docs/03)
+    if x_source == "howspace":
+        msg = payload.get("event", {}).get("message", payload) if isinstance(payload.get("event"), dict) else payload
+        content = msg.get("text") or payload.get("content") or payload.get("message") or ""
+        author = (msg.get("author", {}) or {}).get("name") if isinstance(msg.get("author"), dict) else msg.get("author") or payload.get("author", "Howspace User")
+        bu = (payload.get("workspace") or {}).get("name") if isinstance(payload.get("workspace"), dict) else payload.get("business_unit", "Unknown")
+    elif x_source == "teams":
+        content = payload.get("text") or payload.get("content") or ""
+        author = (payload.get("from") or {}).get("name", "Teams User")
+        bu = payload.get("channel", payload.get("business_unit", "Teams"))
+    else:
+        content = payload.get("content") or payload.get("message") or ""
+        author = payload.get("author", "Webhook")
+        bu = payload.get("business_unit", "Unknown")
     if not content:
         raise HTTPException(400, "Missing content")
     if not await db.tenants.find_one({"id": tenant_id}):
@@ -1112,8 +1202,8 @@ async def webhook_receive(
     doc = {
         "id": sid, "tenant_id": tenant_id,
         "content": content, "source": x_source or "webhook",
-        "business_unit": payload.get("business_unit", "Unknown"),
-        "author": payload.get("author", "Webhook"),
+        "business_unit": bu,
+        "author": author,
         "submitted_at": now,
         "status": SignalStatus.PENDING.value,
         "risk_level": None, "confidence": None, "summary": None,
@@ -1133,6 +1223,247 @@ async def webhook_receive(
 @api.get("/")
 async def root():
     return {"service": "TALK TO+ BDaaS", "version": "1.3.0", "status": "online"}
+
+
+# --------------------------------------------------------------------
+# Notifications (docs/04 — Slack / MS Teams Oracle alert push)
+# --------------------------------------------------------------------
+class NotificationChannel(BaseModel):
+    id: str
+    tenant_id: str
+    type: Literal["slack", "teams"]
+    webhook_url: str
+    min_severity: RiskLevel = RiskLevel.HIGH
+    enabled: bool = True
+    created_at: datetime
+    label: Optional[str] = None
+
+
+class NotificationCreate(BaseModel):
+    type: Literal["slack", "teams"]
+    webhook_url: str
+    min_severity: RiskLevel = RiskLevel.HIGH
+    label: Optional[str] = None
+
+
+def _encrypt_url(url: str) -> str:
+    """Optional encryption — Fernet if NOTIFICATION_FERNET_KEY set, else stored as-is."""
+    if not NOTIFICATION_FERNET_KEY:
+        return url
+    try:
+        from cryptography.fernet import Fernet
+        return Fernet(NOTIFICATION_FERNET_KEY.encode()).encrypt(url.encode()).decode()
+    except Exception:
+        return url
+
+
+def _decrypt_url(stored: str) -> str:
+    if not NOTIFICATION_FERNET_KEY:
+        return stored
+    try:
+        from cryptography.fernet import Fernet
+        return Fernet(NOTIFICATION_FERNET_KEY.encode()).decrypt(stored.encode()).decode()
+    except Exception:
+        return stored
+
+
+@api.get("/notifications", response_model=List[NotificationChannel])
+async def list_notifications(user=Depends(get_current_user)):
+    docs = await db.notification_channels.find({"tenant_id": user["tenant_id"]}, {"_id": 0}).sort("created_at", -1).to_list(50)
+    # decrypt for display (last 4 chars only in real prod — show full for owner)
+    for d in docs:
+        d["webhook_url"] = _decrypt_url(d["webhook_url"])
+    return [NotificationChannel(**d) for d in docs]
+
+
+@api.post("/notifications", response_model=NotificationChannel)
+async def create_notification(body: NotificationCreate, user=Depends(get_current_user)):
+    nid = str(uuid.uuid4())
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": nid, "tenant_id": user["tenant_id"],
+        "type": body.type, "webhook_url": _encrypt_url(body.webhook_url),
+        "min_severity": body.min_severity.value, "enabled": True,
+        "created_at": now, "label": body.label,
+    }
+    await db.notification_channels.insert_one(doc.copy())
+    doc["webhook_url"] = body.webhook_url
+    return NotificationChannel(**doc)
+
+
+@api.delete("/notifications/{nid}")
+async def delete_notification(nid: str, user=Depends(get_current_user)):
+    r = await db.notification_channels.delete_one({"id": nid, "tenant_id": user["tenant_id"]})
+    if r.deleted_count == 0:
+        raise HTTPException(404, "Not found")
+    return {"ok": True}
+
+
+def _slack_blocks(title: str, description: str, fields: List[tuple]) -> dict:
+    return {
+        "blocks": [
+            {"type": "header", "text": {"type": "plain_text", "text": title}},
+            {"type": "section", "fields": [{"type": "mrkdwn", "text": f"*{k}:*\n{v}"} for k, v in fields]},
+            {"type": "section", "text": {"type": "mrkdwn", "text": description}},
+            {"type": "context", "elements": [{"type": "mrkdwn", "text": "TALK TO+ BDaaS · Sovereign Edge"}]},
+        ]
+    }
+
+
+def _teams_card(title: str, description: str, fields: List[tuple]) -> dict:
+    facts = [{"name": k, "value": str(v)} for k, v in fields]
+    return {
+        "@type": "MessageCard", "@context": "http://schema.org/extensions",
+        "summary": title, "themeColor": "EF4444",
+        "sections": [{"activityTitle": title, "facts": facts, "text": description}],
+    }
+
+
+async def _post_webhook(url: str, payload: dict) -> bool:
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.post(url, json=payload)
+            return r.status_code < 400
+    except Exception as e:
+        logger.warning(f"notification post failed: {e}")
+        return False
+
+
+@api.post("/notifications/{nid}/test")
+async def test_notification(nid: str, user=Depends(get_current_user)):
+    ch = await db.notification_channels.find_one({"id": nid, "tenant_id": user["tenant_id"]}, {"_id": 0})
+    if not ch:
+        raise HTTPException(404)
+    url = _decrypt_url(ch["webhook_url"])
+    fields = [("Sector", "Test"), ("Velocity", "+0%"), ("Z-Score", "0"), ("Confidence", "100%")]
+    payload = _slack_blocks("⚠️ TALK TO+ Test Alert", "This is a test message from TALK TO+ BDaaS.", fields) \
+        if ch["type"] == "slack" else _teams_card("TALK TO+ Test Alert", "Test message from TALK TO+ BDaaS.", fields)
+    ok = await _post_webhook(url, payload)
+    if not ok:
+        raise HTTPException(502, "Webhook delivery failed")
+    return {"ok": True}
+
+
+_SEV_ORDER = {"LOW": 1, "MODERATE": 2, "HIGH": 3, "CRITICAL": 4}
+
+
+async def dispatcher_loop():
+    """Outbox dispatcher — processes audit_log entries delivered=False and pushes to channels."""
+    NOTIFY_EVENTS = {"oracle.spike", "signal.validated"}
+    while True:
+        try:
+            pending = await db.audit_log.find(
+                {"delivered": False, "event": {"$in": list(NOTIFY_EVENTS)}}
+            ).limit(50).to_list(50)
+            for evt in pending:
+                channels = await db.notification_channels.find(
+                    {"tenant_id": evt["tenant_id"], "enabled": True}
+                ).to_list(20)
+                payload_data = evt.get("payload", {})
+                severity = (payload_data.get("final_risk") or "HIGH").upper()
+                for ch in channels:
+                    min_sev = ch.get("min_severity", "HIGH")
+                    if _SEV_ORDER.get(severity, 0) < _SEV_ORDER.get(min_sev, 3):
+                        continue
+                    fields = [(k, str(v)) for k, v in payload_data.items()][:6]
+                    title = f"⚠️ {evt['event']} · {severity}"
+                    desc = json.dumps(payload_data, ensure_ascii=False)[:300]
+                    p = _slack_blocks(title, desc, fields) if ch["type"] == "slack" else _teams_card(title, desc, fields)
+                    await _post_webhook(_decrypt_url(ch["webhook_url"]), p)
+                await db.audit_log.update_one({"id": evt["id"]}, {"$set": {"delivered": True}})
+        except Exception:
+            logger.exception("dispatcher error")
+        await asyncio.sleep(60)
+
+
+# --------------------------------------------------------------------
+# PDF export (docs/05 — Action Card boardroom-ready PDF)
+# --------------------------------------------------------------------
+ACTION_CARD_HTML = """<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+@page { size: A4; margin: 30mm 25mm; @bottom-right { content: counter(page) " / " counter(pages); font-size: 9pt; color: #94A3B8; } }
+body { font-family: 'Helvetica', sans-serif; color: #0A0A0A; }
+.brand { display: flex; align-items: center; gap: 12px; margin-bottom: 24px; padding-bottom: 12px; border-bottom: 2px solid #0A0A0A; }
+.brand .mark { width: 40px; height: 40px; background: #0A0A0A; color: white; display: flex; align-items: center; justify-content: center; border-radius: 50%; font-weight: 900; font-size: 18px; }
+.brand .name { font-size: 22px; font-weight: 900; letter-spacing: -0.05em; }
+.brand .sub { font-size: 9px; letter-spacing: 0.3em; color: #64748B; text-transform: uppercase; }
+h1 { font-size: 28px; font-weight: 900; letter-spacing: -0.04em; margin: 12px 0 6px; }
+.meta { font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: #64748B; }
+.badge { display: inline-block; padding: 4px 10px; border-radius: 2px; font-size: 10px; font-weight: 700; letter-spacing: 0.2em; text-transform: uppercase; border: 1px solid; }
+.badge-CRITICAL { color: #DC2626; background: #FEF2F2; border-color: #FECACA; }
+.badge-HIGH { color: #EA580C; background: #FFF7ED; border-color: #FED7AA; }
+.badge-MODERATE { color: #CA8A04; background: #FEFCE8; border-color: #FEF08A; }
+.badge-LOW { color: #16A34A; background: #F0FDF4; border-color: #BBF7D0; }
+h2 { font-size: 11px; letter-spacing: 0.25em; text-transform: uppercase; color: #64748B; margin: 24px 0 8px; font-weight: 700; }
+.summary { background: #F9FAFB; padding: 16px; border-left: 3px solid #0A0A0A; font-size: 11pt; line-height: 1.6; }
+ol.steps { margin: 0; padding: 0; list-style: none; counter-reset: step; }
+ol.steps li { counter-increment: step; padding: 10px 0 10px 36px; position: relative; border-bottom: 1px solid #E2E8F0; font-size: 11pt; }
+ol.steps li::before { content: counter(step); position: absolute; left: 0; top: 12px; width: 24px; height: 24px; background: #0A0A0A; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 10pt; font-weight: 700; }
+.patterns { font-size: 10pt; color: #475569; }
+.patterns li { margin: 4px 0; }
+.footer { margin-top: 32px; padding-top: 12px; border-top: 1px solid #E2E8F0; font-size: 9pt; color: #94A3B8; display: flex; justify-content: space-between; }
+.tag { background: #0A0A0A; color: white; padding: 2px 8px; border-radius: 2px; font-size: 9pt; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; }
+</style></head><body>
+<div class="brand">
+  <div class="mark">+</div>
+  <div><div class="name">TALK TO+ <span style="color:#94A3B8;">/ BDAAS</span></div><div class="sub">Execution Risk Validation</div></div>
+</div>
+<div class="meta">Action Card · {{ tenant_name }} · {{ created }}</div>
+<h1>{{ card.title }}</h1>
+<div style="margin: 8px 0 16px;">
+  <span class="badge badge-{{ severity }}">{{ severity }}</span>
+  {% if card.swarm_verified %}<span class="tag" style="margin-left:8px;">Swarm Verified</span>{% endif %}
+</div>
+<div class="summary">{{ card.summary }}</div>
+
+{% if signal %}
+<h2>Signal</h2>
+<div style="font-size:11pt; line-height:1.5;">{{ signal.content }}</div>
+<div class="meta" style="margin-top:6px;">{{ signal.business_unit }} · {{ signal.author }}</div>
+{% endif %}
+
+{% if signal and signal.execution_gaps %}
+<h2>Execution Gaps</h2>
+<ul style="font-size:11pt; line-height:1.6;">{% for g in signal.execution_gaps %}<li>{{ g }}</li>{% endfor %}</ul>
+{% endif %}
+
+<h2>Playbook</h2>
+<ol class="steps">{% for s in card.playbook %}<li>{{ s }}</li>{% endfor %}</ol>
+
+{% if card.swarm_patterns_used %}
+<h2>Universal Success Patterns</h2>
+<ul class="patterns">{% for p in card.swarm_patterns_used %}<li>· {{ p }}</li>{% endfor %}</ul>
+{% endif %}
+
+<div class="footer">
+  <div>Impact score: {{ card.impact_score or '—' }} / 5</div>
+  <div>Confidential · 4-Eyes Verified · TALK TO+ BDaaS v1.3.0</div>
+</div>
+</body></html>"""
+
+
+@api.get("/action-cards/{cid}/export.pdf")
+async def export_card_pdf(cid: str, user=Depends(get_current_user)):
+    card = await db.action_cards.find_one({"id": cid, "tenant_id": user["tenant_id"]}, {"_id": 0})
+    if not card:
+        raise HTTPException(404)
+    signal = await db.signals.find_one({"id": card["signal_id"]}, {"_id": 0})
+    tenant = await db.tenants.find_one({"id": user["tenant_id"]}, {"_id": 0})
+    severity = (signal or {}).get("override_risk_level") or (signal or {}).get("risk_level") or "MODERATE"
+    from jinja2 import Template
+    from weasyprint import HTML
+    html = Template(ACTION_CARD_HTML).render(
+        card=card, signal=signal, severity=severity,
+        tenant_name=(tenant or {}).get("name", "—"),
+        created=card["created_at"].strftime("%Y-%m-%d %H:%M") if isinstance(card.get("created_at"), datetime) else str(card.get("created_at", "")),
+    )
+    pdf_bytes = HTML(string=html).write_pdf()
+    await audit("card.exported", user["id"], user["tenant_id"], {"card_id": cid})
+    from fastapi.responses import Response
+    return Response(
+        pdf_bytes, media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="action-card-{cid[:8]}.pdf"'},
+    )
 
 
 # --------------------------------------------------------------------
@@ -1403,7 +1734,15 @@ async def startup():
     await db.users.create_index("email", unique=True)
     await db.signals.create_index([("tenant_id", 1), ("submitted_at", -1)])
     await db.swarm_fragments.create_index("created_at")
+    # docs/03 — TTL index for webhook nonces (10 min replay window)
+    try:
+        await db.webhook_nonces.create_index("created_at", expireAfterSeconds=600)
+    except Exception:
+        pass
     await seed_demo()
+    if ENABLE_DISPATCHER:
+        asyncio.create_task(dispatcher_loop())
+        logger.info("Notification dispatcher started")
 
 
 @app.on_event("shutdown")

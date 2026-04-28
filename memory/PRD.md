@@ -41,6 +41,15 @@ Build TALK TO+ BDaaS — Execution Risk Validation Engine. Privacy-first, "Sover
 - ✅ **WebSocket `/api/ws/oracle`** — pushes fragment count + pending count every 15s
 - ✅ **`/app/HANDOFF.md`** + **`/app/docs/01-07*.md`** — autonomous agent handoff package
 
+## 4c. Erä 2 additions (Apr 2026)
+- ✅ **PDF export** (docs/05): `GET /api/action-cards/{id}/export.pdf` — boardroom-ready WeasyPrint PDF + Frontend "PDF" button
+- ✅ **Notifications** (docs/04): `Notifications` collection + CRUD `/api/notifications` + `/test` endpoint + Slack/Teams payload formatters + Outbox dispatcher loop (gated by `ENABLE_DISPATCHER` env) + Frontend `/notifications` page with channel management
+- ✅ **Webhook strict mode** (docs/03): `WEBHOOK_STRICT=true` enforces HMAC + nonce + timestamp window; TTL-indexed `webhook_nonces` collection (10-min replay window); Howspace + Teams payload mapping
+- ✅ **Security hardening** (docs/07): security headers middleware (X-Frame-Options, CSP, HSTS, Referrer-Policy), `slowapi` rate limiting wired (10/min login, 5/min register, 60/min webhook), `CORS_ORIGINS` env allowlist, encryption helper for stored webhook URLs
+- ✅ **vLLM abstraction** (docs/06): `_llm_chat_json()` unified interface; toggles between Gemini 3 Flash and local vLLM via `USE_LOCAL_LLM=true` + `VLLM_BASE_URL`
+- ✅ **Postgres scaffold** (docs/01): `postgres_adapter.py` stub + feature flag `USE_POSTGRES` + Tenant RLS context manager template
+- ⏭ **Server.py split** (docs/02): refactor plan written to `_split_plan.py` (deferred — pure mechanical, high regression risk in single session)
+
 ## 5. Demo credentials
 - Super Admin: `admin@talktoplus.io` / `Admin!2026`
 - Facilitator: `facilitator@talktoplus.io` / `Facil!2026`
