@@ -38,3 +38,12 @@ Thumbs.db
 # Test reports
 test_reports/
 .emergent/automation_output/
+-e 
+# Environment and credential files
+.env
+.env.*
+*.env
+credentials.json
+*.pem
+*.key
+.credentials
