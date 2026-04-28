@@ -13,7 +13,18 @@ VECTOR_DIM = 256
 
 
 def semantic_embed(text: str) -> List[float]:
-    """Stable pseudo-embedding for clustering. Hash n-grams into buckets."""
+    """Stable pseudo-embedding for clustering. Hash n-grams into buckets.
+    When `USE_BGE_M3=true` and sentence-transformers is installed, this transparently
+    swaps to a real BGE-M3 (1024-dim multilingual) embedding."""
+    try:
+        from services.embedding_advanced import semantic_embed as _bge_embed, is_available
+        if is_available():
+            v = _bge_embed(text)
+            if v:
+                return v
+    except Exception:
+        pass
+
     vec = np.zeros(VECTOR_DIM, dtype=np.float32)
     words = [w.lower() for w in text.split() if len(w) > 2]
     if not words:

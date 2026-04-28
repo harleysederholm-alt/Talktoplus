@@ -1,0 +1,58 @@
+# TALK TO+ BDaaS — Production stack (PostgreSQL + Qdrant + Redis)
+# Spin up with: docker compose -f docker-compose.prod.yml up -d
+# Then set in /app/backend/.env:
+#   USE_POSTGRES=true
+#   POSTGRES_URL=postgresql+asyncpg://talktoplus:talktoplus@localhost:5432/talktoplus_bdaas
+#   QDRANT_URL=http://localhost:6333
+#   REDIS_URL=redis://localhost:6379/0
+
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: talktoplus-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: talktoplus
+      POSTGRES_PASSWORD: talktoplus
+      POSTGRES_DB: talktoplus_bdaas
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U talktoplus"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    container_name: talktoplus-qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrantdata:/qdrant/storage
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:6333/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: talktoplus-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+
+volumes:
+  pgdata:
+  qdrantdata:
+  redisdata:

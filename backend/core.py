@@ -37,6 +37,7 @@ VLLM_BASE_URL = os.environ.get("VLLM_BASE_URL", "")
 VLLM_MODEL = os.environ.get("VLLM_MODEL", "google/gemma-4b-it")
 USE_POSTGRES = os.environ.get("USE_POSTGRES", "false").lower() == "true"
 ENABLE_DISPATCHER = os.environ.get("ENABLE_DISPATCHER", "false").lower() == "true"
+ENABLE_EMAIL_SCHEDULER = os.environ.get("ENABLE_EMAIL_SCHEDULER", "false").lower() == "true"
 WEBHOOK_STRICT = os.environ.get("WEBHOOK_STRICT", "false").lower() == "true"
 RATE_LIMIT_ENABLED = os.environ.get("RATE_LIMIT_ENABLED", "true").lower() == "true"
 CORS_ORIGINS_RAW = os.environ.get("CORS_ORIGINS", "*")

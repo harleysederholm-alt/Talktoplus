@@ -66,6 +66,24 @@ export default function Boardroom() {
     }
   };
 
+  const exportDrilldownPDF = async (category) => {
+    try {
+      toast(locale === 'fi' ? `Luodaan ${category}-syvätason PDF…` : `Generating ${category} drill-down…`);
+      const res = await http.get(`/reports/drilldown/${category}.pdf`, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `drilldown-${category}-${new Date().toISOString().slice(0, 10)}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success(locale === 'fi' ? 'Syvätason PDF valmis ✓' : 'Drill-down PDF ready ✓');
+    } catch (e) {
+      toast.error('Export failed');
+    }
+  };
+
   useEffect(() => {
     Promise.all([
       http.get('/analytics/heatmap'),
@@ -153,7 +171,14 @@ export default function Boardroom() {
               const sevClass = hasData ? `sev-${level}` : 'border-slate-200 text-slate-400 bg-slate-50';
               const barClass = hasData ? `bar-${level}` : 'bg-slate-200';
               return (
-                <div key={key} data-testid={`heat-${key}`} className="border border-slate-200 rounded-sm p-4">
+                <button
+                  key={key}
+                  type="button"
+                  data-testid={`heat-${key}`}
+                  onClick={() => exportDrilldownPDF(key)}
+                  title={locale === 'fi' ? 'Klikkaa avataksesi syvätason PDF' : 'Click for deep-dive PDF'}
+                  className="text-left border border-slate-200 rounded-sm p-4 hover:border-ink hover:shadow-sm transition-all"
+                >
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <div className="text-[10px] tracking-[0.2em] uppercase text-slate-500 font-bold truncate">{label}</div>
@@ -168,9 +193,12 @@ export default function Boardroom() {
                   </div>
                   <div className="mt-3 flex items-baseline justify-between">
                     <span className="font-heading text-xl font-bold">{hasData ? data.score : '—'}</span>
-                    <span className="text-[9px] tracking-widest uppercase text-slate-500">{hasData ? `${data.count} sig.` : t.empty || 'No data'}</span>
+                    <span className="text-[9px] tracking-widest uppercase text-slate-500 flex items-center gap-1">
+                      {hasData ? `${data.count} sig.` : (t.empty || 'No data')}
+                      <FilePdf size={10} weight="bold" className="text-slate-400" />
+                    </span>
                   </div>
-                </div>
+                </button>
               );
             })}
           </div>

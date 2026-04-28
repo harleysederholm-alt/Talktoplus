@@ -10,7 +10,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
-from core import db, logger, limiter, ENABLE_DISPATCHER, CORS_ALLOW_LIST
+from core import db, logger, limiter, ENABLE_DISPATCHER, ENABLE_EMAIL_SCHEDULER, CORS_ALLOW_LIST
 from routers import (
     auth, tenants, signals, action_cards, strategy_docs,
     swarm, oracle, analytics, system, webhook, notifications, reports, ws,
@@ -70,6 +70,13 @@ async def startup():
         from services.notifications import dispatcher_loop
         asyncio.create_task(dispatcher_loop())
         logger.info("Notification dispatcher started")
+    if ENABLE_EMAIL_SCHEDULER:
+        from services.email import monthly_scheduler_loop, is_configured
+        if is_configured():
+            asyncio.create_task(monthly_scheduler_loop())
+            logger.info("Monthly email scheduler started")
+        else:
+            logger.warning("ENABLE_EMAIL_SCHEDULER=true but RESEND_API_KEY missing — scheduler disabled")
 
 
 @app.on_event("shutdown")
