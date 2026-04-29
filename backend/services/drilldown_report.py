@@ -2,7 +2,7 @@
 TALK TO+ BDaaS — Drill-down deep-dive PDF for a single bottleneck category.
 Renders explainer + cross-sector data + tenant-specific signals + recommended playbook.
 """
-EOH = \"\"\"<!DOCTYPE html><html><head><meta charset="utf-8">
+EOH = """<!DOCTYPE html><html><head><meta charset="utf-8">
 <style>
 @page {
   size: A4;
@@ -361,7 +361,7 @@ td {
   Raw qualitative content remains strictly within the originating tenant's boundary.
 </div>
 
-</body></html>\"\"\"
+</body></html>"""
 
 
 def render_drilldown_pdf(payload: dict) -> bytes:
