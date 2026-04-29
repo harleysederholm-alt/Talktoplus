@@ -24,13 +24,13 @@ from slowapi.util import get_remote_address
 ROOT = FilePath(__file__).parent
 load_dotenv(ROOT / ".env")
 
-MONGO_URL = os.environ["MONGO_URL"]
-DB_NAME = os.environ["DB_NAME"]
-JWT_SECRET = os.environ["JWT_SECRET"]
-JWT_ALGORITHM = os.environ["JWT_ALGORITHM"]
-JWT_EXPIRE_MINUTES = int(os.environ["JWT_EXPIRE_MINUTES"])
-EMERGENT_LLM_KEY = os.environ["EMERGENT_LLM_KEY"]
-WEBHOOK_SECRET = os.environ["WEBHOOK_HMAC_SECRET"]
+MONGO_URL = os.environ.get("MONGO_URL", "mongodb://localhost:27017")
+DB_NAME = os.environ.get("DB_NAME", "talktoplus")
+JWT_SECRET = os.environ.get("JWT_SECRET", "supersecretkey_for_demo_only")
+JWT_ALGORITHM = os.environ.get("JWT_ALGORITHM", "HS256")
+JWT_EXPIRE_MINUTES = int(os.environ.get("JWT_EXPIRE_MINUTES", "1440"))
+EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
+WEBHOOK_SECRET = os.environ.get("WEBHOOK_HMAC_SECRET", "")
 
 USE_LOCAL_LLM = os.environ.get("USE_LOCAL_LLM", "false").lower() == "true"
 VLLM_BASE_URL = os.environ.get("VLLM_BASE_URL", "")
